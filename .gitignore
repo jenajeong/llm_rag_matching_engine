@@ -1,0 +1,43 @@
+# ▒▒▒ Python 기본 무시 항목 ▒▒▒
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.log
+
+# ▒▒▒ Django 관련 ▒▒▒
+*.sqlite3
+db.sqlite3
+media/
+staticfiles/
+
+# ▒▒▒ 가상환경 ▒▒▒
+env/
+.env/
+.venv/
+venv/
+
+# ▒▒▒ IDE 및 편집기 설정 ▒▒▒
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ▒▒▒ 환경변수 파일 ▒▒▒
+.env
+.env.*
+
+# ▒▒▒ 마이그레이션 백업 ▒▒▒
+*.bak
+*.orig
+
+# ▒▒▒ pytest나 테스트 로그 ▒▒▒
+htmlcov/
+.coverage
+.tox/
+.pytest_cache/
+
+# ▒▒▒ OS 특화 항목 ▒▒▒
+.DS_Store
+Thumbs.db
