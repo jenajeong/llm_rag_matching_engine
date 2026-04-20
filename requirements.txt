@@ -1,4 +1,12 @@
 asgiref==3.11.1
 Django==6.0.4
+accelerate>=1.13.0
+chromadb>=1.4.0
+networkx>=3.0
+numpy>=1.21.0
+openai>=1.0.0
+sentencepiece>=0.2.1
 sqlparse==0.5.5
+torch>=2.11.0
+transformers>=5.5.4
 tzdata==2026.1
