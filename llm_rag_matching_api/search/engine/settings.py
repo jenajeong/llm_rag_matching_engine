@@ -15,7 +15,7 @@ DATA_TRAIN_ARTICLE_FILE = TRAIN_DATA_DIR / "article_filtering.json"
 DATA_TRAIN_PATENT_FILE = TRAIN_DATA_DIR / "patent_filtering.json"
 DATA_TRAIN_PROJECT_FILE = TRAIN_DATA_DIR / "project_filtering.json"
 
-RAG_STORE_DIR = DATA_DIR / "rag_store"
+RAG_STORE_DIR = DATA_DIR / "rag_store_v2"
 
 QWEN_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
 QWEN_EMBEDDING_DIM = 4096
