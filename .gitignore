@@ -41,3 +41,9 @@ htmlcov/
 # ▒▒▒ OS 특화 항목 ▒▒▒
 .DS_Store
 Thumbs.db
+
+# ▒▒▒ 데이터베이스 관련 ▒▒▒
+data/
+.data/
+tmp_debug_response.json
+saved_response.json
