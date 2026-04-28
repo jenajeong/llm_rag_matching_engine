@@ -37,8 +37,7 @@ if not SECRET_KEY:
     raise ValueError('SECRET_KEY is not set. Add it to the .env file.')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
-
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '49.247.40.203,indigo.ai.kr,www.indigo.ai.kr').split(',')
 
 
