@@ -10,3 +10,4 @@ sqlparse==0.5.3
 torch>=2.2.0
 transformers>=4.40.0
 tzdata==2025.1
+gunicorn>=21.0.0
