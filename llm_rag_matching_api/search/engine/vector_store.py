@@ -110,6 +110,46 @@ class ChromaVectorStore:
         """
         return f"{doc_type}_{item_type}"
 
+    def _make_item_id(self, doc_type: str, item_type: str, raw_key: str) -> str:
+        raw_id = f"{doc_type}_{item_type}_{raw_key}"
+        hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
+        return f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+
+    def make_chunk_id(self, doc_type: str, doc_id: str) -> str:
+        return self._make_item_id(doc_type, "c", str(doc_id))
+
+    def chunk_exists(self, doc_type: str, doc_id: str) -> bool:
+        collection_name = self._get_collection_name(doc_type, "chunks")
+        collection = self.collections.get(collection_name)
+        if not collection:
+            return False
+
+        result = collection.get(
+            ids=[self.make_chunk_id(doc_type, str(doc_id))],
+            include=["metadatas"]
+        )
+        return bool(result and result.get("ids"))
+
+    def filter_new_doc_ids(self, doc_type: str, doc_ids: List[str]) -> List[str]:
+        collection_name = self._get_collection_name(doc_type, "chunks")
+        collection = self.collections.get(collection_name)
+        if not collection:
+            return [str(doc_id) for doc_id in doc_ids]
+
+        normalized_doc_ids = [str(doc_id) for doc_id in doc_ids]
+        chunk_ids = [self.make_chunk_id(doc_type, doc_id) for doc_id in normalized_doc_ids]
+        existing_doc_ids = set()
+
+        for i in range(0, len(chunk_ids), CHROMADB_MAX_BATCH_SIZE):
+            result = collection.get(
+                ids=chunk_ids[i:i + CHROMADB_MAX_BATCH_SIZE],
+                include=["metadatas"]
+            )
+            for metadata in result.get("metadatas", []) or []:
+                existing_doc_ids.add(str(metadata.get("doc_id", "")))
+
+        return [doc_id for doc_id in normalized_doc_ids if doc_id not in existing_doc_ids]
+
     def add_entities(
         self,
         entities: List[Dict],
@@ -137,9 +177,7 @@ class ChromaVectorStore:
 
         for i, entity in enumerate(entities):
             # 고유 ID 생성 (해시 사용으로 중복 방지)
-            raw_id = f"{doc_type}_e_{entity['name']}_{entity['source_doc_id']}"
-            hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
-            entity_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+            entity_id = self._make_item_id(doc_type, "e", f"{entity['name']}_{entity['source_doc_id']}")
 
             ids.append(entity_id)
             # LightRAG 방식: name + description
@@ -194,9 +232,11 @@ class ChromaVectorStore:
 
         for relation in relations:
             # 고유 ID 생성 (해시 사용으로 중복 방지)
-            raw_id = f"{doc_type}_r_{relation['source_entity']}_{relation['target_entity']}_{relation['source_doc_id']}"
-            hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
-            rel_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+            rel_id = self._make_item_id(
+                doc_type,
+                "r",
+                f"{relation['source_entity']}_{relation['target_entity']}_{relation['source_doc_id']}"
+            )
 
             ids.append(rel_id)
 
@@ -256,9 +296,7 @@ class ChromaVectorStore:
 
         for i, chunk in enumerate(chunks):
             # 고유 ID (해시 사용으로 중복 방지)
-            raw_id = f"{doc_type}_c_{chunk['doc_id']}"
-            hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
-            chunk_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+            chunk_id = self.make_chunk_id(doc_type, str(chunk["doc_id"]))
 
             ids.append(chunk_id)
             documents.append(chunk["text"])
