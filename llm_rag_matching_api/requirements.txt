@@ -13,3 +13,7 @@ tzdata==2025.1
 gunicorn>=21.0.0
 markdown>=3.5.0
 playwright>=1.40.0
+pandas>=2.0.0
+requests>=2.31.0
+mariadb>=1.1.10
+langdetect>=1.0.9
