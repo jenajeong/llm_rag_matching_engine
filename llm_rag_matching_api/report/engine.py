@@ -1,4 +1,3 @@
-import base64
 import html
 import json
 import re
@@ -10,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 from search.engine.cost_tracker import log_chat_usage
+from search.engine.result_cache import SearchResultCacheError, load_search_result
 from search.engine.service import normalize_keywords_if_duplicate_query, recommend_professors
 from search.engine.settings import (
     LLM_MODEL,
@@ -90,9 +90,14 @@ class ReportGenerator:
             return payload["search_result"]
         if isinstance(payload.get("ahp_results"), dict):
             return payload
+        if payload.get("search_id"):
+            try:
+                return load_search_result(str(payload["search_id"]))
+            except SearchResultCacheError as error:
+                raise ReportGenerationError(str(error)) from error
         if payload.get("query"):
             return recommend_professors(payload)
-        raise ReportGenerationError("Pass the first endpoint response, or provide query to run recommendation first.")
+        raise ReportGenerationError("Pass search_id, the first endpoint response, or provide query to run recommendation first.")
 
     def _prepare_input_json(self, ahp_results: Dict[str, Any]) -> Dict[str, Any]:
         query = ahp_results.get("query", "")
@@ -274,7 +279,3 @@ def build_pdf_html(body_html: str) -> str:
 {body_html}
 </body>
 </html>"""
-
-
-def encode_pdf_base64(pdf_path: str | Path) -> str:
-    return base64.b64encode(Path(pdf_path).read_bytes()).decode("ascii")
