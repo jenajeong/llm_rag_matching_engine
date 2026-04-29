@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from django.http import FileResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -23,13 +24,15 @@ def generate(request):
     except Exception as error:
         return JsonResponse({"detail": str(error)}, status=500)
 
-    file_handle = open(report_data["pdf_path"], "rb")
+    pdf_path = Path(report_data["pdf_path"])
+    file_handle = open(pdf_path, "rb")
     response = FileResponse(
         file_handle,
         content_type="application/pdf",
         as_attachment=True,
         filename=report_data["pdf_filename"],
     )
+    response._resource_closers.append(lambda: pdf_path.unlink(missing_ok=True))
     response["X-Report-Id"] = report_data["report_id"]
     if report_data.get("search_id"):
         response["X-Search-Id"] = report_data["search_id"]
