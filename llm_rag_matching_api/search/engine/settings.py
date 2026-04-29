@@ -34,3 +34,11 @@ RETRIEVAL_TOP_K = 20
 FINAL_TOP_K = 5
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+KIPRIS_API_KEY = os.environ.get("KIPRIS_API_KEY", "").strip()
+
+INDIGO_DB_HOST = os.environ.get("INDIGO_DB_HOST", "").strip()
+INDIGO_DB_PORT = int(os.environ.get("INDIGO_DB_PORT", "3306"))
+INDIGO_DB_USER = os.environ.get("INDIGO_DB_USER", "").strip()
+INDIGO_DB_PASSWORD = os.environ.get("INDIGO_DB_PASSWORD", "").strip()
+INDIGO_DB_NAME = os.environ.get("INDIGO_DB_NAME", "").strip()
+INDIGO_DB_CONNECT_TIMEOUT = int(os.environ.get("INDIGO_DB_CONNECT_TIMEOUT", "30"))
