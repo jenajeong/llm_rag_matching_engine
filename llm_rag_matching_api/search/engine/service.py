@@ -6,6 +6,7 @@ from .ahp_config import DEFAULT_TYPE_WEIGHTS
 from .professor_aggregator import ProfessorAggregator
 from .ranker import ProfessorRanker
 from .retriever import HybridRetriever
+from .result_cache import save_search_result
 from .settings import OPENAI_API_KEY, RETRIEVAL_TOP_K, SIMILARITY_THRESHOLD
 
 
@@ -134,10 +135,12 @@ def recommend_professors(payload: Dict[str, Any]) -> Dict[str, Any]:
         "ranked_professors": ranked_professors,
     }
 
-    return {
+    result = {
         "search_id": f"search_{timestamp}_{uuid.uuid4().hex[:8]}",
         "query": query,
         "doc_types": doc_types,
         "rag_results": rag_results,
         "ahp_results": ahp_results,
     }
+    save_search_result(result)
+    return result

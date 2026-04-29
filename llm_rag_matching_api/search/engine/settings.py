@@ -6,6 +6,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results"
 REPORT_RESULTS_DIR = RESULTS_DIR / "runs" / "report"
+SEARCH_RESULT_CACHE_DIR = PROJECT_ROOT / "tmp" / "search_results"
+SEARCH_RESULT_CACHE_TTL_HOURS = int(os.environ.get("SEARCH_RESULT_CACHE_TTL_HOURS", "24"))
 
 ARTICLE_DATA_FILE = DATA_DIR / "article" / "article.json"
 PATENT_DATA_FILE = DATA_DIR / "patent" / "patent.json"
