@@ -1,10 +1,13 @@
 import json
+import logging
 from pathlib import Path
 
 from django.http import FileResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from .engine import ReportGenerationError, ReportGenerator
+
+logger = logging.getLogger(__name__)
 
 
 @csrf_exempt
@@ -23,6 +26,9 @@ def generate(request):
         return JsonResponse({"detail": str(error)}, status=400)
     except Exception as error:
         return JsonResponse({"detail": str(error)}, status=500)
+
+    logger.info("input_data: %s", report_data.get("input_data"))
+    logger.info("report_text: %s", report_data.get("report_text"))
 
     pdf_path = Path(report_data["pdf_path"])
     file_handle = open(pdf_path, "rb")
