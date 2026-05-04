@@ -111,12 +111,6 @@ class IndexBuilder:
         """
         ChromaDB chunks 컬렉션에 이미 존재하는 문서를 제외하고
         새로 처리해야 할 문서만 반환한다.
-
-        Args:
-            docs: 전처리된 문서 리스트
-
-        Returns:
-            아직 인덱싱되지 않은 문서 리스트
         """
         doc_ids = [as_text(doc.get("doc_id")) for doc in docs]
         new_doc_ids = set(self.vector_store.filter_new_doc_ids(self.doc_type, doc_ids))
@@ -243,10 +237,10 @@ class IndexBuilder:
             # 1. 데이터 로드
             raw_data = self.load_data(data_file)
 
-            # 2. 텍스트 전처리
+            # 2. 텍스트 전처리 (text null이어도 title로 처리)
             docs = self.process_documents(raw_data)
 
-            # 3. 이미 인덱싱된 문서 제외 (신규 문서만 추출)
+            # 3. 이미 인덱싱된 문서 제외
             docs = self.filter_new_documents(docs)
 
             if not docs:
@@ -258,24 +252,26 @@ class IndexBuilder:
             entities, relations, failed_doc_ids = self.extract_entities_relations(docs, batch_size=batch_size)
             self._save_failed_docs(failed_doc_ids, len(docs))
 
-            if not entities:
-                logger.warning("No entities extracted; stopping before embedding/storage.")
-                tracker.end_task(**self.stats)
-                return self.stats
+            # 엔티티가 없어도 chunk/graph 저장은 계속 진행
+            # (title만 있는 문서는 GPT가 엔티티를 못 뽑을 수 있음)
+            if entities:
+                entities = merge_duplicate_entities(entities)
+                relations = merge_duplicate_relations(relations)
+                self.stats["entities_after_merge"] = len(entities)
+                self.stats["relations_after_merge"] = len(relations)
+            else:
+                logger.warning(
+                    "No entities extracted — skipping entity/relation merge. "
+                    "Chunks will still be stored."
+                )
 
-            # 5. 중복 엔티티/관계 병합
-            entities = merge_duplicate_entities(entities)
-            relations = merge_duplicate_relations(relations)
-            self.stats["entities_after_merge"] = len(entities)
-            self.stats["relations_after_merge"] = len(relations)
-
-            # 6. 체크포인트 저장
+            # 5. 체크포인트 저장
             self._save_checkpoint(checkpoint_file, docs, entities, relations, failed_doc_ids)
 
-        # 7. 임베딩 생성
+        # 6. 임베딩 생성
         embeddings = self.generate_embeddings(entities, relations, docs)
 
-        # 8. 벡터DB + 그래프DB 저장
+        # 7. 벡터DB + 그래프DB 저장
         self.store_to_vector_db(entities, relations, docs, *embeddings)
         self.store_to_graph_db(entities, relations)
 
@@ -299,12 +295,11 @@ class IndexBuilder:
         if max_docs:
             docs = docs[:max_docs]
         entities, relations, still_failed = self.extract_entities_relations(docs)
-        if not entities:
-            return {"retried": len(docs), "success": 0, "still_failed": len(still_failed)}
-        entities = merge_duplicate_entities(entities)
-        relations = merge_duplicate_relations(relations)
-        embeddings = self.generate_embeddings(entities, relations, [])
-        self.store_to_vector_db(entities, relations, [], embeddings[0], embeddings[1], None)
+        if entities:
+            entities = merge_duplicate_entities(entities)
+            relations = merge_duplicate_relations(relations)
+        embeddings = self.generate_embeddings(entities, relations, docs)
+        self.store_to_vector_db(entities, relations, docs, *embeddings)
         self.store_to_graph_db(entities, relations)
         return {"retried": len(docs), "success": len(docs) - len(still_failed), "still_failed": len(still_failed)}
 
