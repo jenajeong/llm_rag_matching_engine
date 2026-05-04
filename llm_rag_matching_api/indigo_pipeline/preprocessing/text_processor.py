@@ -8,7 +8,7 @@ from ..core.types import ProcessedDocument
 
 
 class TextProcessor:
-    MIN_TEXT_LENGTH = 100
+    MIN_TEXT_LENGTH = 10  # title만 있는 경우를 위해 기존 100 → 10으로 완화
 
     def __init__(self, min_text_length: int | None = None):
         self.min_text_length = min_text_length or self.MIN_TEXT_LENGTH
@@ -35,16 +35,21 @@ class TextProcessor:
             doc_id = self._doc_id(record, "patent")
             title = self._title(record)
             abstract = self._body(record)
-            if not abstract:
+
+            # title도 없고 text도 없으면 스킵
+            if not title and not abstract:
                 self.stats["skipped_empty_text"] += 1
                 continue
-            if self._starts_with_title(abstract, title):
+
+            # text가 없으면 title만으로 구성
+            if not abstract:
+                text = self._join_labeled(("특허명", title))
+                self.stats["title_only"] += 1
+            elif self._starts_with_title(abstract, title):
                 text = f"[요약] {abstract}"
-                if len(abstract) <= self.min_text_length:
-                    self.stats["skipped_short"] += 1
-                    continue
             else:
                 text = self._join_labeled(("특허명", title), ("요약", abstract))
+
             self._append_if_valid(docs, doc_id, "patent", text, {
                 "title": title,
                 "register_status": clean_ws(get_nested(metadata, "kipris_register_status")),
@@ -61,10 +66,19 @@ class TextProcessor:
             doc_id = self._doc_id(record, "article")
             title = self._title(record)
             abstract = self._body(record)
-            if not abstract:
+
+            # title도 없고 text도 없으면 스킵
+            if not title and not abstract:
                 self.stats["skipped_empty_text"] += 1
                 continue
-            text = self._join_labeled(("논문명", title), ("초록", abstract))
+
+            # text가 없으면 title만으로 구성
+            if not abstract:
+                text = self._join_labeled(("논문명", title))
+                self.stats["title_only"] += 1
+            else:
+                text = self._join_labeled(("논문명", title), ("초록", abstract))
+
             self._append_if_valid(docs, doc_id, "article", text, {
                 "title": title,
                 "raw_metadata": as_dict(record.get("metadata")),
@@ -79,10 +93,19 @@ class TextProcessor:
             doc_id = self._doc_id(record, "project")
             title = self._title(record)
             content = self._body(record)
-            if not content:
+
+            # title도 없고 text도 없으면 스킵
+            if not title and not content:
                 self.stats["skipped_empty_text"] += 1
                 continue
-            text = self._join_labeled(("과제명", title), ("내용", content))
+
+            # text가 없으면 title만으로 구성
+            if not content:
+                text = self._join_labeled(("과제명", title))
+                self.stats["title_only"] += 1
+            else:
+                text = self._join_labeled(("과제명", title), ("내용", content))
+
             self._append_if_valid(docs, doc_id, "project", text, {
                 "title": title,
                 "raw_metadata": as_dict(record.get("metadata")),
