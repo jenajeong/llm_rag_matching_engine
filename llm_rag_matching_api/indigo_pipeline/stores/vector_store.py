@@ -77,7 +77,7 @@ class ChromaVectorStore:
             settings=Settings(anonymized_telemetry=False)
         )
 
-        # 6개 컬렉션 초기화
+        # 9개 컬렉션 초기화
         self.collections = {}
         self._init_collections()
 
@@ -105,12 +105,71 @@ class ChromaVectorStore:
 
         Args:
             doc_type: patent / article / project
-            item_type: entities / relations
+            item_type: entities / relations / chunks
 
         Returns:
             컬렉션 이름
         """
         return f"{doc_type}_{item_type}"
+
+    def _make_chunk_id(self, doc_type: str, doc_id: str) -> str:
+        """
+        chunk ID 생성 (doc_type + doc_id 기반 해시)
+
+        Args:
+            doc_type: 문서 타입
+            doc_id: 문서 ID
+
+        Returns:
+            chunk ID 문자열
+        """
+        raw_id = f"{doc_type}_c_{doc_id}"
+        hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
+        return f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+
+    # =========================================================
+    # 중복 체크
+    # =========================================================
+
+    def filter_new_doc_ids(self, doc_type: str, doc_ids: List[str]) -> List[str]:
+        """
+        ChromaDB chunks 컬렉션에 이미 존재하는 문서를 제외하고
+        새로 처리해야 할 doc_id 목록만 반환한다.
+
+        Args:
+            doc_type: 문서 타입 (patent / article / project)
+            doc_ids: 확인할 doc_id 목록
+
+        Returns:
+            아직 인덱싱되지 않은 doc_id 목록
+        """
+        collection_name = self._get_collection_name(doc_type, "chunks")
+        collection = self.collections.get(collection_name)
+
+        # 컬렉션이 없으면 전부 신규
+        if not collection:
+            return [str(doc_id) for doc_id in doc_ids]
+
+        normalized = [str(doc_id) for doc_id in doc_ids]
+
+        # doc_id → chunk_id 변환
+        chunk_ids = [self._make_chunk_id(doc_type, doc_id) for doc_id in normalized]
+
+        # ChromaDB에 배치 조회 (이미 있는 chunk_id의 metadata에서 doc_id 추출)
+        existing_doc_ids: set[str] = set()
+        for i in range(0, len(chunk_ids), CHROMADB_MAX_BATCH_SIZE):
+            batch = chunk_ids[i:i + CHROMADB_MAX_BATCH_SIZE]
+            result = collection.get(ids=batch, include=["metadatas"])
+            for meta in result.get("metadatas", []) or []:
+                if meta:
+                    existing_doc_ids.add(str(meta.get("doc_id", "")))
+
+        # 신규 doc_id만 반환
+        return [doc_id for doc_id in normalized if doc_id not in existing_doc_ids]
+
+    # =========================================================
+    # 추가
+    # =========================================================
 
     def add_entities(
         self,
@@ -132,7 +191,6 @@ class ChromaVectorStore:
         collection_name = self._get_collection_name(doc_type, "entities")
         collection = self.collections[collection_name]
 
-        # ChromaDB 형식으로 변환
         ids = []
         documents = []
         metadatas = []
@@ -190,7 +248,7 @@ class ChromaVectorStore:
         Args:
             relations: 관계 정보 리스트 (source_entity, target_entity, keywords, description, source_doc_id)
             embeddings: 관계 임베딩 벡터
-            doc_type: 문서 타입
+            doc_type: 문서 타입 (patent/article/project)
         """
         if len(relations) == 0:
             return
@@ -202,32 +260,27 @@ class ChromaVectorStore:
         documents = []
         metadatas = []
 
-        for relation in relations:
+        for i, relation in enumerate(relations):
             if not isinstance(relation, dict):
                 continue
-            relation["source_entity"] = as_text(relation.get("source_entity"))
-            relation["target_entity"] = as_text(relation.get("target_entity"))
-            relation["source_doc_id"] = as_text(relation.get("source_doc_id"))
-            relation["keywords"] = as_text(relation.get("keywords"))
-            relation["description"] = as_text(relation.get("description"))
-            if not relation["source_entity"] or not relation["target_entity"]:
+            source = as_text(relation.get("source_entity"))
+            target = as_text(relation.get("target_entity"))
+            if not source or not target:
                 continue
-            # 고유 ID 생성 (해시 사용으로 중복 방지)
-            raw_id = f"{doc_type}_r_{relation['source_entity']}_{relation['target_entity']}_{relation['source_doc_id']}"
+            keywords = as_text(relation.get("keywords"))
+
+            # 고유 ID 생성
+            raw_id = f"{doc_type}_r_{source}_{target}"
             hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
             rel_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
             ids.append(rel_id)
-
             # LightRAG 방식: keywords를 맨 앞에 배치
-            keywords = relation.get("keywords", "")
-            description = relation.get("description", "")
-            rel_text = f"{keywords}\t{relation['source_entity']}\n{relation['target_entity']}\n{description}"
+            rel_text = f"{keywords}\t{source}\n{target}\n{as_text(relation.get('description'))}"
             documents.append(rel_text)
-
             metadatas.append({
-                "source_entity": relation["source_entity"],
-                "target_entity": relation["target_entity"],
+                "source_entity": source,
+                "target_entity": target,
                 "keywords": keywords,
                 "source_doc_id": relation.get("source_doc_id", ""),
                 "doc_type": doc_type
@@ -281,10 +334,7 @@ class ChromaVectorStore:
             chunk["title"] = as_text(chunk.get("title"))
             if not chunk["doc_id"] or not chunk["text"]:
                 continue
-            # 고유 ID (해시 사용으로 중복 방지)
-            raw_id = f"{doc_type}_c_{chunk['doc_id']}"
-            hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
-            chunk_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
+            chunk_id = self._make_chunk_id(doc_type, chunk["doc_id"])
 
             ids.append(chunk_id)
             documents.append(chunk["text"])
@@ -310,92 +360,9 @@ class ChromaVectorStore:
 
         print(f"Added {len(chunks)} chunks to {collection_name}")
 
-    def search_chunks(
-        self,
-        query_embedding: Union[List[float], np.ndarray],
-        doc_types: List[str] = None,
-        top_k: int = None
-    ) -> List[Dict]:
-        """
-        청크 검색 (Naive RAG용)
-
-        Args:
-            query_embedding: 쿼리 임베딩 벡터
-            doc_types: 검색할 문서 타입 리스트 (None이면 전체)
-            top_k: 반환할 결과 수
-
-        Returns:
-            검색 결과 리스트
-        """
-        if doc_types is None:
-            doc_types = ["patent", "article", "project"]
-
-        top_k = top_k or TOP_K_RESULTS
-
-        if isinstance(query_embedding, np.ndarray):
-            query_embedding = query_embedding.tolist()
-
-        all_results = []
-
-        for doc_type in doc_types:
-            collection_name = self._get_collection_name(doc_type, "chunks")
-            if collection_name not in self.collections:
-                continue
-
-            collection = self.collections[collection_name]
-
-            if collection.count() == 0:
-                continue
-
-            try:
-                results = collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=top_k,
-                    include=["documents", "metadatas", "distances"]
-                )
-
-                if results and results["ids"][0]:
-                    for i, id in enumerate(results["ids"][0]):
-                        distance = results["distances"][0][i] if results["distances"] else 0
-                        similarity = 1 - distance
-
-                        all_results.append({
-                            "id": id,
-                            "document": results["documents"][0][i] if results["documents"] else "",
-                            "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                            "similarity": similarity,
-                            "doc_type": doc_type,
-                            "item_type": "chunk"
-                        })
-
-            except Exception as e:
-                # HNSW 타이밍 이슈로 인한 재시도
-                import time
-                time.sleep(0.5)
-                try:
-                    results = collection.query(
-                        query_embeddings=[query_embedding],
-                        n_results=top_k,
-                        include=["documents", "metadatas", "distances"]
-                    )
-                    if results and results["ids"][0]:
-                        for i, id in enumerate(results["ids"][0]):
-                            distance = results["distances"][0][i] if results["distances"] else 0
-                            similarity = 1 - distance
-                            all_results.append({
-                                "id": id,
-                                "document": results["documents"][0][i] if results["documents"] else "",
-                                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                                "similarity": similarity,
-                                "doc_type": doc_type,
-                                "item_type": "chunk"
-                            })
-                except Exception as e2:
-                    print(f"Search error in {collection_name}: {e2}")
-                    continue
-
-        all_results.sort(key=lambda x: x["similarity"], reverse=True)
-        return all_results[:top_k]
+    # =========================================================
+    # 검색
+    # =========================================================
 
     def search_entities(
         self,
@@ -419,7 +386,6 @@ class ChromaVectorStore:
 
         top_k = top_k or TOP_K_RESULTS
 
-        # numpy array를 리스트로 변환
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
 
@@ -442,11 +408,10 @@ class ChromaVectorStore:
                     include=["documents", "metadatas", "distances"]
                 )
 
-                # 결과 정리
                 if results and results["ids"][0]:
                     for i, id in enumerate(results["ids"][0]):
                         distance = results["distances"][0][i] if results["distances"] else 0
-                        similarity = 1 - distance  # cosine distance를 similarity로 변환
+                        similarity = 1 - distance
 
                         all_results.append({
                             "id": id,
@@ -483,7 +448,6 @@ class ChromaVectorStore:
                     print(f"Search error in {collection_name}: {e2}")
                     continue
 
-        # 유사도 기준 정렬 후 상위 k개 반환
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         return all_results[:top_k]
 
@@ -574,6 +538,93 @@ class ChromaVectorStore:
         all_results.sort(key=lambda x: x["similarity"], reverse=True)
         return all_results[:top_k]
 
+    def search_chunks(
+        self,
+        query_embedding: Union[List[float], np.ndarray],
+        doc_types: List[str] = None,
+        top_k: int = None
+    ) -> List[Dict]:
+        """
+        청크 검색 (Naive RAG용)
+
+        Args:
+            query_embedding: 쿼리 임베딩 벡터
+            doc_types: 검색할 문서 타입 리스트 (None이면 전체)
+            top_k: 반환할 결과 수
+
+        Returns:
+            검색 결과 리스트
+        """
+        if doc_types is None:
+            doc_types = ["patent", "article", "project"]
+
+        top_k = top_k or TOP_K_RESULTS
+
+        if isinstance(query_embedding, np.ndarray):
+            query_embedding = query_embedding.tolist()
+
+        all_results = []
+
+        for doc_type in doc_types:
+            collection_name = self._get_collection_name(doc_type, "chunks")
+            if collection_name not in self.collections:
+                continue
+
+            collection = self.collections[collection_name]
+
+            if collection.count() == 0:
+                continue
+
+            try:
+                results = collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=top_k,
+                    include=["documents", "metadatas", "distances"]
+                )
+
+                if results and results["ids"][0]:
+                    for i, id in enumerate(results["ids"][0]):
+                        distance = results["distances"][0][i] if results["distances"] else 0
+                        similarity = 1 - distance
+
+                        all_results.append({
+                            "id": id,
+                            "document": results["documents"][0][i] if results["documents"] else "",
+                            "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                            "similarity": similarity,
+                            "doc_type": doc_type,
+                            "item_type": "chunk"
+                        })
+
+            except Exception as e:
+                # HNSW 타이밍 이슈로 인한 재시도
+                import time
+                time.sleep(0.5)
+                try:
+                    results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=top_k,
+                        include=["documents", "metadatas", "distances"]
+                    )
+                    if results and results["ids"][0]:
+                        for i, id in enumerate(results["ids"][0]):
+                            distance = results["distances"][0][i] if results["distances"] else 0
+                            similarity = 1 - distance
+                            all_results.append({
+                                "id": id,
+                                "document": results["documents"][0][i] if results["documents"] else "",
+                                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                                "similarity": similarity,
+                                "doc_type": doc_type,
+                                "item_type": "chunk"
+                            })
+                except Exception as e2:
+                    print(f"Search error in {collection_name}: {e2}")
+                    continue
+
+        all_results.sort(key=lambda x: x["similarity"], reverse=True)
+        return all_results[:top_k]
+
     def search_all(
         self,
         query_embedding: Union[List[float], np.ndarray],
@@ -596,6 +647,10 @@ class ChromaVectorStore:
             "relations": self.search_relations(query_embedding, doc_types, top_k)
         }
 
+    # =========================================================
+    # 유틸리티
+    # =========================================================
+
     def get_stats(self) -> Dict[str, int]:
         """컬렉션별 통계 반환"""
         stats = {}
@@ -614,7 +669,6 @@ class ChromaVectorStore:
         for item_type in ["entities", "relations"]:
             collection_name = self._get_collection_name(doc_type, item_type)
             collection = self.collections.get(collection_name)
-
             if collection:
                 collection.delete(where={"source_doc_id": doc_id})
 
@@ -627,46 +681,3 @@ class ChromaVectorStore:
 
         self._init_collections()
         print("All collections cleared")
-
-
-if __name__ == "__main__":
-    import numpy as np
-
-    # 테스트
-    print("Testing ChromaVectorStore...")
-    store = ChromaVectorStore()
-
-    # 샘플 엔티티
-    test_entities = [
-        {
-            "name": "딥러닝",
-            "entity_type": "TECHNOLOGY",
-            "description": "심층 신경망 기반 기계학습 기술",
-            "source_doc_id": "patent_001"
-        },
-        {
-            "name": "의료영상분석",
-            "entity_type": "DOMAIN",
-            "description": "CT, MRI 등 의료 영상 분석 분야",
-            "source_doc_id": "patent_001"
-        }
-    ]
-
-    # 샘플 임베딩 (실제로는 Embedder 사용)
-    test_embeddings = np.random.rand(2, 1536)  # OpenAI 임베딩 차원
-
-    # 엔티티 추가
-    store.add_entities(test_entities, test_embeddings, doc_type="patent")
-
-    # 통계 확인
-    print("\nCollection stats:")
-    for name, count in store.get_stats().items():
-        print(f"  - {name}: {count}")
-
-    # 검색 테스트
-    query_embedding = np.random.rand(1536)
-    results = store.search_entities(query_embedding, doc_types=["patent"], top_k=5)
-
-    print(f"\nSearch results: {len(results)} items")
-    for r in results:
-        print(f"  - {r['metadata'].get('name')}: {r['similarity']:.4f}")

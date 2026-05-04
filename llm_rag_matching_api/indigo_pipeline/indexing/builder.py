@@ -34,14 +34,23 @@ def setup_logging(doc_type: str = "index") -> Path:
     log_file = config.LOG_DIR / f"build_index_{doc_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    root.handlers.clear()
+
+    # 기존 파일 핸들러만 제거 (콘솔 핸들러는 유지)
+    root.handlers = [h for h in root.handlers if not isinstance(h, logging.FileHandler)]
+
     formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    root.addHandler(console)
+
+    # 콘솔 핸들러가 없으면 추가
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root.handlers):
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        root.addHandler(console)
+
+    # 파일 핸들러 추가
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
+
     return log_file
 
 
@@ -73,6 +82,8 @@ class IndexBuilder:
         self.stats: dict[str, Any] = {
             "docs_loaded": 0,
             "docs_processed": 0,
+            "docs_already_indexed": 0,
+            "docs_new": 0,
             "entities_extracted": 0,
             "relations_extracted": 0,
             "entities_after_merge": 0,
@@ -95,6 +106,33 @@ class IndexBuilder:
         self.stats["docs_processed"] = len(docs)
         logger.info("Processed %s/%s documents. Stats=%s", len(docs), len(raw_data), self.text_processor.get_stats())
         return docs
+
+    def filter_new_documents(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        ChromaDB chunks 컬렉션에 이미 존재하는 문서를 제외하고
+        새로 처리해야 할 문서만 반환한다.
+
+        Args:
+            docs: 전처리된 문서 리스트
+
+        Returns:
+            아직 인덱싱되지 않은 문서 리스트
+        """
+        doc_ids = [as_text(doc.get("doc_id")) for doc in docs]
+        new_doc_ids = set(self.vector_store.filter_new_doc_ids(self.doc_type, doc_ids))
+
+        new_docs = [doc for doc in docs if as_text(doc.get("doc_id")) in new_doc_ids]
+        already_indexed = len(docs) - len(new_docs)
+
+        self.stats["docs_already_indexed"] = already_indexed
+        self.stats["docs_new"] = len(new_docs)
+
+        logger.info(
+            "Duplicate check — already indexed: %s, new: %s",
+            already_indexed,
+            len(new_docs),
+        )
+        return new_docs
 
     def extract_entities_relations(self, docs: list[dict[str, Any]], batch_size: int = 10) -> tuple[list[dict], list[dict], list[str]]:
         if not docs:
@@ -125,7 +163,7 @@ class IndexBuilder:
         all_relations = []
         extracted_doc_ids = set()
         for i in tqdm(range(0, len(docs), batch_size), desc=f"Extracting {self.doc_type}"):
-            batch = docs[i : i + batch_size]
+            batch = docs[i: i + batch_size]
             try:
                 entities, relations = self.extractor.extract_batch(batch, doc_type=self.doc_type)
                 for entity in entities:
@@ -190,6 +228,7 @@ class IndexBuilder:
         checkpoint_file = config.CHECKPOINT_DIR / f"index_{self.doc_type}.pkl"
 
         if resume and checkpoint_file.exists():
+            logger.info("Resuming from checkpoint: %s", checkpoint_file)
             with checkpoint_file.open("rb") as f:
                 checkpoint = pickle.load(f)
             docs = checkpoint["docs"]
@@ -200,23 +239,46 @@ class IndexBuilder:
             if clear:
                 self.vector_store.clear_all()
                 self.graph_store.clear()
+
+            # 1. 데이터 로드
             raw_data = self.load_data(data_file)
+
+            # 2. 텍스트 전처리
             docs = self.process_documents(raw_data)
+
+            # 3. 이미 인덱싱된 문서 제외 (신규 문서만 추출)
+            docs = self.filter_new_documents(docs)
+
+            if not docs:
+                logger.info("All documents already indexed. Nothing to do.")
+                tracker.end_task(**self.stats)
+                return self.stats
+
+            # 4. GPT 엔티티/관계 추출
             entities, relations, failed_doc_ids = self.extract_entities_relations(docs, batch_size=batch_size)
             self._save_failed_docs(failed_doc_ids, len(docs))
+
             if not entities:
                 logger.warning("No entities extracted; stopping before embedding/storage.")
                 tracker.end_task(**self.stats)
                 return self.stats
+
+            # 5. 중복 엔티티/관계 병합
             entities = merge_duplicate_entities(entities)
             relations = merge_duplicate_relations(relations)
             self.stats["entities_after_merge"] = len(entities)
             self.stats["relations_after_merge"] = len(relations)
+
+            # 6. 체크포인트 저장
             self._save_checkpoint(checkpoint_file, docs, entities, relations, failed_doc_ids)
 
+        # 7. 임베딩 생성
         embeddings = self.generate_embeddings(entities, relations, docs)
+
+        # 8. 벡터DB + 그래프DB 저장
         self.store_to_vector_db(entities, relations, docs, *embeddings)
         self.store_to_graph_db(entities, relations)
+
         cost_result = tracker.end_task(**self.stats)
         if cost_result:
             logger.info("Estimated API cost: $%.6f", cost_result.get("total_cost_usd", 0.0))
@@ -303,3 +365,7 @@ def main() -> None:
     else:
         result = builder.run(args.data_file, clear=args.clear, resume=args.resume, batch_size=args.batch_size)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
