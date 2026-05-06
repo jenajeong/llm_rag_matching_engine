@@ -120,7 +120,7 @@ class Embedder:
             return embeddings[0]
         return embeddings
 
-    def _encode_qwen(self, texts: List[str], batch_size: int = 16) -> np.ndarray:
+    def _encode_qwen(self, texts: List[str], batch_size: int = 4) -> np.ndarray:
         """Qwen3로 임베딩 생성 (배치 처리로 메모리 관리)"""
         import torch
 
