@@ -10,7 +10,16 @@ from typing import List, Dict, Set, Optional
 import networkx as nx
 
 from ..config import RAG_STORE_DIR
-from ..core.safe import as_text
+from ..core.safe import as_text, split_csv
+
+
+def _source_set(value) -> Set[str]:
+    if isinstance(value, (list, tuple, set)):
+        sources: Set[str] = set()
+        for item in value:
+            sources.update(split_csv(item))
+        return sources
+    return split_csv(value)
 
 
 class GraphStore:
@@ -63,7 +72,7 @@ class GraphStore:
         """
         name = as_text(name)
         entity_type = as_text(entity_type, "UNKNOWN")
-        doc_id = as_text(doc_id)
+        doc_ids = _source_set(doc_id)
         description = as_text(description)
         if not name:
             return
@@ -71,12 +80,12 @@ class GraphStore:
         if self.graph.has_node(name):
             # 기존 노드에 source 추가
             node_data = self.graph.nodes[name]
-            sources = node_data.get("sources", [])
+            sources = _source_set(node_data.get("sources", []))
 
             # 중복 체크
-            if doc_id and doc_id not in sources:
-                sources.append(doc_id)
-                self.graph.nodes[name]["sources"] = sources
+            updated_sources = sources | doc_ids
+            if updated_sources != sources:
+                self.graph.nodes[name]["sources"] = sorted(updated_sources)
 
             # description이 비어있으면 업데이트
             if not node_data.get("description") and description:
@@ -87,7 +96,7 @@ class GraphStore:
                 name,
                 entity_type=entity_type,
                 description=description,
-                sources=[doc_id] if doc_id else []
+                sources=sorted(doc_ids)
             )
 
     def add_relation(
@@ -111,7 +120,7 @@ class GraphStore:
         source_entity = as_text(source_entity)
         target_entity = as_text(target_entity)
         keywords = as_text(keywords)
-        doc_id = as_text(doc_id)
+        doc_ids = _source_set(doc_id)
         description = as_text(description)
         if not source_entity or not target_entity:
             return
@@ -119,28 +128,27 @@ class GraphStore:
         if self.graph.has_edge(source_entity, target_entity):
             # 기존 엣지에 source 추가
             edge_data = self.graph.edges[source_entity, target_entity]
-            sources = edge_data.get("sources", [])
-            keywords_list = edge_data.get("keywords", [])
+            sources = _source_set(edge_data.get("sources", []))
+            keywords_set = _source_set(edge_data.get("keywords", []))
 
-            if doc_id and doc_id not in sources:
-                sources.append(doc_id)
-                self.graph.edges[source_entity, target_entity]["sources"] = sources
-                # weight 증가 (관계 빈도)
-                self.graph.edges[source_entity, target_entity]["weight"] = len(sources)
+            updated_sources = sources | doc_ids
+            if updated_sources != sources:
+                self.graph.edges[source_entity, target_entity]["sources"] = sorted(updated_sources)
+                self.graph.edges[source_entity, target_entity]["weight"] = len(updated_sources)
 
             # 새 키워드 추가 (중복 제거)
-            if keywords and keywords not in keywords_list:
-                keywords_list.append(keywords)
-                self.graph.edges[source_entity, target_entity]["keywords"] = keywords_list
+            updated_keywords = keywords_set | split_csv(keywords)
+            if updated_keywords != keywords_set:
+                self.graph.edges[source_entity, target_entity]["keywords"] = sorted(updated_keywords)
         else:
             # 새 엣지 추가
             self.graph.add_edge(
                 source_entity,
                 target_entity,
-                keywords=[keywords] if keywords else [],
+                keywords=sorted(split_csv(keywords)),
                 description=description,
-                sources=[doc_id] if doc_id else [],
-                weight=1
+                sources=sorted(doc_ids),
+                weight=len(doc_ids) if doc_ids else 1
             )
 
     def add_entities_batch(self, entities: List[Dict]):

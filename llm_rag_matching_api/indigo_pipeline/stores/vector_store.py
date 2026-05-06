@@ -364,11 +364,37 @@ class ChromaVectorStore:
     # 검색
     # =========================================================
 
+    def _append_query_results(self, all_results: List[Dict], results: Dict, doc_type: str, item_type: str) -> None:
+        if not results or not results["ids"][0]:
+            return
+        for i, item_id in enumerate(results["ids"][0]):
+            distance = results["distances"][0][i] if results["distances"] else 0
+            all_results.append({
+                "id": item_id,
+                "document": results["documents"][0][i] if results["documents"] else "",
+                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                "similarity": 1 - distance,
+                "doc_type": doc_type,
+                "item_type": item_type
+            })
+
+    def _deduplicate_entities_by_name(self, results: List[Dict]) -> List[Dict]:
+        deduped: dict[str, Dict] = {}
+        for item in sorted(results, key=lambda x: x["similarity"], reverse=True):
+            metadata = item.get("metadata") or {}
+            name = as_text(metadata.get("name")).upper() or as_text(item.get("id"))
+            if name and name not in deduped:
+                deduped[name] = item
+        return list(deduped.values())
+
     def search_entities(
         self,
         query_embedding: Union[List[float], np.ndarray],
         doc_types: List[str] = None,
-        top_k: int = None
+        top_k: int = None,
+        deduplicate: bool = True,
+        fetch_multiplier: int = 5,
+        max_dedup_retries: int = 2
     ) -> List[Dict]:
         """
         엔티티 검색
@@ -388,6 +414,55 @@ class ChromaVectorStore:
 
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
+
+        attempts = max(1, max_dedup_retries + 1) if deduplicate else 1
+        base_multiplier = max(1, int(fetch_multiplier or 1))
+        best_results: List[Dict] = []
+
+        for attempt in range(attempts):
+            requested = top_k * (base_multiplier * (attempt + 1)) if deduplicate else top_k
+            all_results = []
+            total_available = 0
+
+            for doc_type in doc_types:
+                collection_name = self._get_collection_name(doc_type, "entities")
+                if collection_name not in self.collections:
+                    continue
+
+                collection = self.collections[collection_name]
+                count = collection.count()
+                if count == 0:
+                    continue
+                total_available += count
+                n_results = min(requested, count)
+
+                try:
+                    results = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=n_results,
+                        include=["documents", "metadatas", "distances"]
+                    )
+                    self._append_query_results(all_results, results, doc_type, "entity")
+                except Exception:
+                    import time
+                    time.sleep(0.5)
+                    try:
+                        results = collection.query(
+                            query_embeddings=[query_embedding],
+                            n_results=n_results,
+                            include=["documents", "metadatas", "distances"]
+                        )
+                        self._append_query_results(all_results, results, doc_type, "entity")
+                    except Exception as e2:
+                        print(f"Search error in {collection_name}: {e2}")
+                        continue
+
+            all_results.sort(key=lambda x: x["similarity"], reverse=True)
+            best_results = self._deduplicate_entities_by_name(all_results) if deduplicate else all_results
+            if not deduplicate or len(best_results) >= top_k or len(all_results) >= total_available:
+                break
+
+        return best_results[:top_k]
 
         all_results = []
 

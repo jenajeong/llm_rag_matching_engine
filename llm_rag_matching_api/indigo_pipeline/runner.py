@@ -19,7 +19,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-retry", type=int, default=None)
     parser.add_argument("--phase", choices=["full", "extract", "store"], default="full")
     parser.add_argument("--extraction-file", default=None, help="Only valid when --doc-type is not all.")
+    parser.add_argument("--manifest-file", default=None, help="Only valid with --phase store and a single doc type.")
     parser.add_argument("--prepared-docs-file", default=None, help="Only valid with --phase extract and a single doc type.")
+    parser.add_argument("--embedding-batch-size", type=int, default=128)
+    parser.add_argument(
+        "--allow-extraction-file-store",
+        action="store_true",
+        help="Allow legacy store from one extraction JSON file. Prefer --manifest-file for large runs.",
+    )
     return parser
 
 
@@ -30,6 +37,8 @@ def run_pipeline(args) -> list[dict]:
         raise ValueError("--data-file can only be used with a single --doc-type.")
     if args.extraction_file and args.doc_type == "all":
         raise ValueError("--extraction-file can only be used with a single --doc-type.")
+    if args.manifest_file and args.doc_type == "all":
+        raise ValueError("--manifest-file can only be used with a single --doc-type.")
     if args.prepared_docs_file and args.doc_type == "all":
         raise ValueError("--prepared-docs-file can only be used with a single --doc-type.")
     for index, doc_type in enumerate(doc_types):
@@ -55,7 +64,20 @@ def run_pipeline(args) -> list[dict]:
                 prepared_docs_file=args.prepared_docs_file,
             )
         elif args.phase == "store":
-            result = builder.run_store(extraction_file=args.extraction_file, clear=clear_for_doc)
+            if args.manifest_file:
+                result = builder.run_store_manifest(
+                    manifest_file=args.manifest_file,
+                    clear=clear_for_doc,
+                    embedding_batch_size=args.embedding_batch_size,
+                )
+            elif args.allow_extraction_file_store:
+                result = builder.run_store(
+                    extraction_file=args.extraction_file,
+                    clear=clear_for_doc,
+                    embedding_batch_size=args.embedding_batch_size,
+                )
+            else:
+                raise ValueError("--phase store requires --manifest-file unless --allow-extraction-file-store is set.")
         else:
             result = builder.run(
                 data_file=args.data_file,

@@ -1,8 +1,10 @@
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--step-timeout", type=int, default=None, help="Maximum seconds per step.")
     parser.add_argument("--state-file", default=str(LOG_DIR / "collection_runner_state.json"))
     parser.add_argument("--log-dir", default=str(LOG_DIR / "collection_runner"))
+    parser.add_argument("--lock-file", default=str(LOG_DIR / "collection_runner.lock"))
+    parser.add_argument("--wait-lock", action="store_true")
+    parser.add_argument("--lock-timeout", type=int, default=0, help="Seconds to wait for lock when --wait-lock is set. 0 means forever.")
+    parser.add_argument("--stale-lock-seconds", type=int, default=24 * 60 * 60)
     parser.add_argument("--list-steps", action="store_true", help="Print available steps and exit.")
     return parser
 
@@ -165,6 +171,48 @@ def resolve_steps(args: argparse.Namespace) -> list[PipelineStep]:
     return [STEPS[name] for name in selected_names if name not in skip_names]
 
 
+@contextmanager
+def runner_lock(args: argparse.Namespace):
+    lock_file = Path(args.lock_file)
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    while True:
+        try:
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "pid": os.getpid(),
+                        "started_at": datetime.now().isoformat(),
+                        "command": sys.argv,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            break
+        except FileExistsError:
+            stale = False
+            try:
+                stale = time.time() - lock_file.stat().st_mtime > args.stale_lock_seconds
+            except OSError:
+                stale = False
+            if stale:
+                print(f"Removing stale lock: {lock_file}")
+                lock_file.unlink(missing_ok=True)
+                continue
+            if not args.wait_lock:
+                raise RuntimeError(f"Another collection runner appears to be running: {lock_file}")
+            if args.lock_timeout and time.time() - started > args.lock_timeout:
+                raise TimeoutError(f"Timed out waiting for lock: {lock_file}")
+            print(f"Waiting for lock: {lock_file}")
+            time.sleep(10)
+    try:
+        yield
+    finally:
+        lock_file.unlink(missing_ok=True)
+
+
 def load_state(state_file: Path) -> dict:
     if not state_file.exists():
         return {"steps": {}}
@@ -179,7 +227,9 @@ def load_state(state_file: Path) -> dict:
 
 def save_state(state_file: Path, state: dict) -> None:
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_file = state_file.with_suffix(f"{state_file.suffix}.tmp")
+    tmp_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_file.replace(state_file)
 
 
 def is_step_successful(state: dict, step: PipelineStep) -> bool:
@@ -287,22 +337,23 @@ def run_sequence(args: argparse.Namespace) -> int:
             print(f"{index}. {step.name}: {step.description}")
         return 0
 
-    if args.reset_state and state_file.exists():
-        state_file.unlink()
-        print(f"Cleared state file: {state_file}")
-
-    state = load_state(state_file)
     failures: list[tuple[str, int]] = []
-    for step in steps:
-        if args.resume and is_step_successful(state, step):
-            print(f"\n[{datetime.now().isoformat(timespec='seconds')}] SKIP  {step.name} (already successful)")
-            continue
+    with runner_lock(args):
+        if args.reset_state and state_file.exists():
+            state_file.unlink()
+            print(f"Cleared state file: {state_file}")
 
-        returncode = run_step(step, args, cwd, log_dir, state, state_file)
-        if returncode != 0:
-            failures.append((step.name, returncode))
-            if not args.keep_going:
-                break
+        state = load_state(state_file)
+        for step in steps:
+            if args.resume and is_step_successful(state, step):
+                print(f"\n[{datetime.now().isoformat(timespec='seconds')}] SKIP  {step.name} (already successful)")
+                continue
+
+            returncode = run_step(step, args, cwd, log_dir, state, state_file)
+            if returncode != 0:
+                failures.append((step.name, returncode))
+                if not args.keep_going:
+                    break
 
     if failures:
         print("\nFailed steps:")

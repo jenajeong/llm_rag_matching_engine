@@ -1,14 +1,17 @@
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
-from datetime import datetime
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .. import config
 from .builder import IndexBuilder, setup_logging
-from .merge import merge_duplicate_entities, merge_duplicate_relations
 
 
 DOC_TYPES = ["patent", "article", "project"]
@@ -16,7 +19,7 @@ DOC_TYPES = ["patent", "article", "project"]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run GPT extraction in subprocess batches, then load embedding model once for store phase."
+        description="Run GPT extraction in subprocess batches, then stream artifacts into one embedding/store phase."
     )
     parser.add_argument("--doc-type", choices=[*DOC_TYPES, "all"], default="all")
     parser.add_argument("--data-file", default=None, help="Only valid with a single --doc-type.")
@@ -27,12 +30,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-interval", type=int, default=20)
     parser.add_argument("--llm-batch-docs", type=int, default=50, help="Number of documents per extraction subprocess.")
     parser.add_argument("--extract-batch-size", type=int, default=10, help="Batch size inside each extraction subprocess.")
+    parser.add_argument("--embedding-batch-size", type=int, default=128, help="Embedding/upsert batch size in store phase.")
     parser.add_argument("--retries", type=int, default=0)
     parser.add_argument("--keep-going", action="store_true")
-    parser.add_argument("--skip-extract", action="store_true", help="Reuse the combined extraction artifact and only store.")
-    parser.add_argument("--skip-store", action="store_true", help="Only run extraction subprocesses and artifact merge.")
+    parser.add_argument("--resume-extract", action="store_true", help="Skip extraction batches with valid artifacts.")
+    parser.add_argument("--skip-extract", action="store_true", help="Reuse manifest and only store.")
+    parser.add_argument("--skip-store", action="store_true", help="Only run extraction subprocesses and manifest creation.")
     parser.add_argument("--run-dir", default=None)
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--lock-file", default=str(config.LOG_DIR / "split_runner.lock"))
+    parser.add_argument("--wait-lock", action="store_true")
+    parser.add_argument("--lock-timeout", type=int, default=0, help="Seconds to wait for lock when --wait-lock is set. 0 means forever.")
+    parser.add_argument("--stale-lock-seconds", type=int, default=24 * 60 * 60)
+    parser.add_argument("--cleanup-success", action="store_true", help="Delete per-batch docs/artifacts after successful store.")
+    parser.add_argument("--retention-days", type=int, default=None, help="Delete old split run directories after success.")
+    parser.add_argument("--max-runs", type=int, default=None, help="Keep only the newest N split run directories after success.")
     return parser
 
 
@@ -48,65 +60,125 @@ def _read_json(path: Path) -> Any:
 
 
 def _chunked(items: list[Any], size: int) -> list[list[Any]]:
+    size = max(1, int(size or 1))
     return [items[index:index + size] for index in range(0, len(items), size)]
 
 
 def _run_command(command: list[str], cwd: Path, retries: int) -> int:
     attempts = retries + 1
+    last_returncode = 1
     for attempt in range(1, attempts + 1):
         print(f"Running attempt {attempt}/{attempts}: {' '.join(command)}")
         completed = subprocess.run(command, cwd=cwd)
+        last_returncode = completed.returncode
         if completed.returncode == 0:
             return 0
-    return completed.returncode
+    return last_returncode
 
 
-def _combine_artifacts(doc_type: str, artifact_files: list[Path], output_file: Path) -> dict[str, Any]:
-    docs: list[dict] = []
-    entities: list[dict] = []
-    relations: list[dict] = []
-    failed_doc_ids: list[str] = []
-    stats: dict[str, Any] = {
-        "docs_processed": 0,
-        "docs_new": 0,
-        "entities_extracted": 0,
-        "relations_extracted": 0,
-        "failed_docs": 0,
-    }
+def _artifact_is_valid(path: Path, doc_type: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        artifact = _read_json(path)
+    except Exception:
+        return False
+    if artifact.get("doc_type") != doc_type:
+        return False
+    return isinstance(artifact.get("docs"), list) and isinstance(artifact.get("entities"), list) and isinstance(artifact.get("relations"), list)
 
-    for artifact_file in artifact_files:
-        artifact = _read_json(artifact_file)
-        docs.extend(artifact.get("docs", []))
-        entities.extend(artifact.get("entities", []))
-        relations.extend(artifact.get("relations", []))
-        failed_doc_ids.extend(artifact.get("failed_doc_ids", []))
-        batch_stats = artifact.get("stats", {})
-        for key in stats:
-            stats[key] += int(batch_stats.get(key, 0) or 0)
 
-    entities = merge_duplicate_entities(entities)
-    relations = merge_duplicate_relations(relations)
-    stats["entities_after_merge"] = len(entities)
-    stats["relations_after_merge"] = len(relations)
-    stats["failed_docs"] = len(set(failed_doc_ids))
+def _manifest_is_valid(path: Path, doc_type: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        manifest = _read_json(path)
+    except Exception:
+        return False
+    if manifest.get("doc_type") != doc_type:
+        return False
+    return all(_artifact_is_valid(Path(item), doc_type) for item in manifest.get("artifact_files", []))
 
-    payload = {
+
+def _create_manifest(doc_type: str, artifact_files: list[Path], output_file: Path) -> dict[str, Any]:
+    manifest = {
         "doc_type": doc_type,
-        "docs": docs,
-        "entities": entities,
-        "relations": relations,
-        "failed_doc_ids": sorted(set(failed_doc_ids)),
-        "stats": stats,
+        "artifact_count": len(artifact_files),
+        "artifact_files": [str(path) for path in artifact_files],
         "saved_at": datetime.now().isoformat(),
     }
-    _write_json(output_file, payload)
-    return payload
+    _write_json(output_file, manifest)
+    return manifest
+
+
+@contextmanager
+def _runner_lock(args: argparse.Namespace):
+    lock_file = Path(args.lock_file)
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    while True:
+        try:
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "pid": os.getpid(),
+                        "started_at": datetime.now().isoformat(),
+                        "command": sys.argv,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            break
+        except FileExistsError:
+            stale = False
+            try:
+                age = time.time() - lock_file.stat().st_mtime
+                stale = age > args.stale_lock_seconds
+            except OSError:
+                stale = False
+            if stale:
+                print(f"Removing stale lock: {lock_file}")
+                lock_file.unlink(missing_ok=True)
+                continue
+            if not args.wait_lock:
+                raise RuntimeError(f"Another split runner appears to be running: {lock_file}")
+            if args.lock_timeout and time.time() - started > args.lock_timeout:
+                raise TimeoutError(f"Timed out waiting for lock: {lock_file}")
+            print(f"Waiting for lock: {lock_file}")
+            time.sleep(10)
+    try:
+        yield
+    finally:
+        lock_file.unlink(missing_ok=True)
+
+
+def _cleanup_run_dir(doc_run_dir: Path) -> None:
+    shutil.rmtree(doc_run_dir / "docs", ignore_errors=True)
+    shutil.rmtree(doc_run_dir / "artifacts", ignore_errors=True)
+
+
+def _cleanup_old_runs(run_root: Path, retention_days: int | None, max_runs: int | None) -> None:
+    base_dir = run_root.parent
+    if not base_dir.exists():
+        return
+    run_dirs = sorted([path for path in base_dir.iterdir() if path.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+    if retention_days is not None:
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        for path in run_dirs:
+            if datetime.fromtimestamp(path.stat().st_mtime) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+    if max_runs is not None and max_runs >= 0:
+        refreshed = sorted([path for path in base_dir.iterdir() if path.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in refreshed[max_runs:]:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear_store: bool) -> dict[str, Any]:
     setup_logging(f"split_{doc_type}")
     doc_run_dir = run_root / doc_type
-    combined_file = doc_run_dir / f"{doc_type}_extraction_combined.json"
+    manifest_file = doc_run_dir / "manifest.json"
 
     if not args.skip_extract:
         builder = IndexBuilder(
@@ -117,15 +189,20 @@ def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear
             checkpoint_interval=args.checkpoint_interval,
         )
         docs = builder.prepare_documents(data_file=args.data_file, clear=args.clear)
-        doc_batches = _chunked(docs, max(1, args.llm_batch_docs))
+        doc_batches = _chunked(docs, args.llm_batch_docs)
         artifact_files: list[Path] = []
 
         print(f"{doc_type}: prepared {len(docs)} docs into {len(doc_batches)} extraction subprocess batches")
         for batch_index, batch_docs in enumerate(doc_batches, 1):
             docs_file = doc_run_dir / "docs" / f"batch_{batch_index:04d}.json"
             artifact_file = doc_run_dir / "artifacts" / f"batch_{batch_index:04d}.json"
-            _write_json(docs_file, batch_docs)
 
+            if args.resume_extract and _artifact_is_valid(artifact_file, doc_type):
+                print(f"{doc_type}: skipping completed extraction batch {batch_index}")
+                artifact_files.append(artifact_file)
+                continue
+
+            _write_json(docs_file, batch_docs)
             command = [
                 args.python,
                 "-m",
@@ -153,10 +230,13 @@ def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear
                 continue
             artifact_files.append(artifact_file)
 
-        combined = _combine_artifacts(doc_type, artifact_files, combined_file)
+        manifest = _create_manifest(doc_type, artifact_files, manifest_file)
     else:
-        combined = _read_json(combined_file)
+        if not _manifest_is_valid(manifest_file, doc_type):
+            raise FileNotFoundError(f"Valid manifest not found for --skip-extract: {manifest_file}")
+        manifest = _read_json(manifest_file)
 
+    store_result = None
     if not args.skip_store:
         store_builder = IndexBuilder(
             doc_type=doc_type,
@@ -165,16 +245,18 @@ def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear
             concurrency=args.concurrency,
             checkpoint_interval=args.checkpoint_interval,
         )
-        store_result = store_builder.run_store(extraction_file=combined_file, clear=clear_store)
-    else:
-        store_result = None
+        store_result = store_builder.run_store_manifest(
+            manifest_file=manifest_file,
+            clear=clear_store,
+            embedding_batch_size=args.embedding_batch_size,
+        )
+        if args.cleanup_success:
+            _cleanup_run_dir(doc_run_dir)
 
     return {
         "doc_type": doc_type,
-        "combined_artifact": str(combined_file),
-        "docs": len(combined.get("docs", [])),
-        "entities": len(combined.get("entities", [])),
-        "relations": len(combined.get("relations", [])),
+        "manifest": str(manifest_file),
+        "artifact_count": manifest.get("artifact_count", 0),
         "store_result": store_result,
     }
 
@@ -184,7 +266,14 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
         raise ValueError("--data-file can only be used with a single --doc-type.")
     run_root = Path(args.run_dir) if args.run_dir else config.CHECKPOINT_DIR / "split_index_runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
     doc_types = DOC_TYPES if args.doc_type == "all" else [args.doc_type]
-    return [_run_doc_type(args, doc_type, run_root, clear_store=args.clear and index == 0) for index, doc_type in enumerate(doc_types)]
+    with _runner_lock(args):
+        results = [
+            _run_doc_type(args, doc_type, run_root, clear_store=args.clear and index == 0)
+            for index, doc_type in enumerate(doc_types)
+        ]
+        if args.retention_days is not None or args.max_runs is not None:
+            _cleanup_old_runs(run_root, args.retention_days, args.max_runs)
+        return results
 
 
 def main() -> None:

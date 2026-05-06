@@ -230,6 +230,11 @@ class IndexBuilder:
         chunk_embeddings = self.embedder.encode(chunk_texts) if chunk_texts else None
         return entity_embeddings, relation_embeddings, chunk_embeddings
 
+    def _iter_batches(self, items: list[Any], batch_size: int):
+        batch_size = max(1, int(batch_size or 1))
+        for index in range(0, len(items), batch_size):
+            yield items[index:index + batch_size]
+
     def store_to_vector_db(self, entities, relations, docs, entity_embeddings, relation_embeddings, chunk_embeddings) -> None:
         if entities and entity_embeddings is not None:
             self.vector_store.add_entities(entities, entity_embeddings, self.doc_type)
@@ -250,6 +255,32 @@ class IndexBuilder:
         self.graph_store.add_relations_batch(relations)
         self.graph_store.save()
         logger.info("Graph stats: %s", self.graph_store.get_stats())
+
+    def store_payload_streaming(
+        self,
+        docs: list[dict],
+        entities: list[dict],
+        relations: list[dict],
+        embedding_batch_size: int = 128,
+        save_graph: bool = True,
+    ) -> None:
+        for entity_batch in self._iter_batches(entities, embedding_batch_size):
+            embeddings = self.generate_embeddings(entity_batch, [], [])
+            self.store_to_vector_db(entity_batch, [], [], *embeddings)
+            self.graph_store.add_entities_batch(entity_batch)
+
+        for relation_batch in self._iter_batches(relations, embedding_batch_size):
+            embeddings = self.generate_embeddings([], relation_batch, [])
+            self.store_to_vector_db([], relation_batch, [], *embeddings)
+            self.graph_store.add_relations_batch(relation_batch)
+
+        for doc_batch in self._iter_batches(docs, embedding_batch_size):
+            embeddings = self.generate_embeddings([], [], doc_batch)
+            self.store_to_vector_db([], [], doc_batch, *embeddings)
+
+        if save_graph:
+            self.graph_store.save()
+            logger.info("Graph stats: %s", self.graph_store.get_stats())
 
     def get_extraction_file(self, path: str | Path | None = None) -> Path:
         if path:
@@ -309,6 +340,7 @@ class IndexBuilder:
         self,
         extraction_file: str | Path | None = None,
         clear: bool = False,
+        embedding_batch_size: int | None = None,
     ) -> dict[str, Any]:
         logger.info("Starting Indigo embedding/store phase for %s", self.doc_type)
         artifact = self._load_extraction_artifact(extraction_file)
@@ -321,10 +353,60 @@ class IndexBuilder:
             self.vector_store.clear_all()
             self.graph_store.clear()
 
-        embeddings = self.generate_embeddings(entities, relations, docs)
-        self.store_to_vector_db(entities, relations, docs, *embeddings)
-        self.store_to_graph_db(entities, relations)
+        if embedding_batch_size:
+            self.store_payload_streaming(docs, entities, relations, embedding_batch_size=embedding_batch_size)
+        else:
+            embeddings = self.generate_embeddings(entities, relations, docs)
+            self.store_to_vector_db(entities, relations, docs, *embeddings)
+            self.store_to_graph_db(entities, relations)
         logger.info("Store phase complete. Stats=%s", self.stats)
+        return self.stats
+
+    def run_store_manifest(
+        self,
+        manifest_file: str | Path,
+        clear: bool = False,
+        embedding_batch_size: int = 128,
+    ) -> dict[str, Any]:
+        logger.info("Starting Indigo streaming store phase for %s from %s", self.doc_type, manifest_file)
+        manifest = json.loads(Path(manifest_file).read_text(encoding="utf-8"))
+        if manifest.get("doc_type") != self.doc_type:
+            raise ValueError(f"Manifest doc_type mismatch: {manifest.get('doc_type')} != {self.doc_type}")
+
+        if clear:
+            self.vector_store.clear_all()
+            self.graph_store.clear()
+
+        artifact_files = [Path(path) for path in manifest.get("artifact_files", [])]
+        totals = {
+            "docs_processed": 0,
+            "docs_new": 0,
+            "entities_extracted": 0,
+            "relations_extracted": 0,
+            "entities_after_merge": 0,
+            "relations_after_merge": 0,
+            "failed_docs": 0,
+        }
+        for artifact_file in artifact_files:
+            artifact = self._load_extraction_artifact(artifact_file)
+            docs = artifact.get("docs", [])
+            entities = artifact.get("entities", [])
+            relations = artifact.get("relations", [])
+            self.store_payload_streaming(
+                docs,
+                entities,
+                relations,
+                embedding_batch_size=embedding_batch_size,
+                save_graph=False,
+            )
+            stats = artifact.get("stats", {})
+            for key in totals:
+                totals[key] += int(stats.get(key, 0) or 0)
+
+        self.graph_store.save()
+        self.stats.update(totals)
+        self.stats["manifest_artifacts_stored"] = len(artifact_files)
+        logger.info("Streaming store phase complete. Stats=%s", self.stats)
         return self.stats
 
     def run(self, data_file: str | Path | None = None, clear: bool = False, resume: bool = False, batch_size: int = 10):
@@ -482,7 +564,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--phase", choices=["full", "extract", "store"], default="full")
     parser.add_argument("--extraction-file", default=None)
+    parser.add_argument("--manifest-file", default=None)
     parser.add_argument("--prepared-docs-file", default=None)
+    parser.add_argument("--embedding-batch-size", type=int, default=128)
+    parser.add_argument(
+        "--allow-extraction-file-store",
+        action="store_true",
+        help="Allow legacy store from one extraction JSON file. Prefer --manifest-file for large runs.",
+    )
     return parser
 
 
@@ -508,7 +597,20 @@ def main() -> None:
             prepared_docs_file=args.prepared_docs_file,
         )
     elif args.phase == "store":
-        result = builder.run_store(extraction_file=args.extraction_file, clear=args.clear)
+        if args.manifest_file:
+            result = builder.run_store_manifest(
+                manifest_file=args.manifest_file,
+                clear=args.clear,
+                embedding_batch_size=args.embedding_batch_size,
+            )
+        elif args.allow_extraction_file_store:
+            result = builder.run_store(
+                extraction_file=args.extraction_file,
+                clear=args.clear,
+                embedding_batch_size=args.embedding_batch_size,
+            )
+        else:
+            raise ValueError("--phase store requires --manifest-file unless --allow-extraction-file-store is set.")
     else:
         result = builder.run(args.data_file, clear=args.clear, resume=args.resume, batch_size=args.batch_size)
     print(json.dumps(result, ensure_ascii=False, indent=2))
