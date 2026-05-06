@@ -42,6 +42,7 @@ services:
     environment:
       - CUDA_VISIBLE_DEVICES=0,1  # GPU 전체 사용 (API 중단 중)
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - model_cache:/root/.cache/huggingface
       - /indigo/search-api/llm_rag_matching_api/data:/app/data
     deploy:

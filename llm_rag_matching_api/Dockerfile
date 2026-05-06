@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.0-cudnn8-runtime-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y software-properties-common \
     curl \
     libmariadb-dev \
     git \
+    docker.io \ 
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
