@@ -31,6 +31,37 @@ services:
     networks:
       - app_network
 
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: indigo_pipeline
+    restart: "no"          # 스케줄러가 직접 실행/종료 관리
+    env_file:
+      - .env
+    environment:
+      - CUDA_VISIBLE_DEVICES=1    # GPU 1 전용 (API는 GPU 0)
+    volumes:
+      - model_cache:/root/.cache/huggingface
+      - /indigo/search-api/llm_rag_matching_api/data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command: ["/bin/bash", "/app/pipeline_entrypoint.sh"]
+    profiles:
+      - pipeline    # 기본 up에서는 제외, 명시적으로만 실행
+    networks:
+      - app_network
+
   nginx:
     image: nginx:1.25-alpine
     container_name: nginx
