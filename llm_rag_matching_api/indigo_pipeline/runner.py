@@ -84,6 +84,7 @@ def run_pipeline(args) -> list[dict]:
                 clear=clear_for_doc,
                 resume=args.resume,
                 batch_size=args.batch_size,
+                embedding_batch_size=args.embedding_batch_size,
             )
         results.append({"doc_type": doc_type, "result": result})
     return results
