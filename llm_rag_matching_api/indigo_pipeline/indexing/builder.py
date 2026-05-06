@@ -340,7 +340,7 @@ class IndexBuilder:
         self,
         extraction_file: str | Path | None = None,
         clear: bool = False,
-        embedding_batch_size: int | None = None,
+        embedding_batch_size: int | None = 128,
     ) -> dict[str, Any]:
         logger.info("Starting Indigo embedding/store phase for %s", self.doc_type)
         artifact = self._load_extraction_artifact(extraction_file)
@@ -353,12 +353,8 @@ class IndexBuilder:
             self.vector_store.clear_all()
             self.graph_store.clear()
 
-        if embedding_batch_size:
-            self.store_payload_streaming(docs, entities, relations, embedding_batch_size=embedding_batch_size)
-        else:
-            embeddings = self.generate_embeddings(entities, relations, docs)
-            self.store_to_vector_db(entities, relations, docs, *embeddings)
-            self.store_to_graph_db(entities, relations)
+        batch_size = max(1, int(embedding_batch_size or 128))
+        self.store_payload_streaming(docs, entities, relations, embedding_batch_size=batch_size)
         logger.info("Store phase complete. Stats=%s", self.stats)
         return self.stats
 
@@ -409,7 +405,14 @@ class IndexBuilder:
         logger.info("Streaming store phase complete. Stats=%s", self.stats)
         return self.stats
 
-    def run(self, data_file: str | Path | None = None, clear: bool = False, resume: bool = False, batch_size: int = 10):
+    def run(
+        self,
+        data_file: str | Path | None = None,
+        clear: bool = False,
+        resume: bool = False,
+        batch_size: int = 10,
+        embedding_batch_size: int = 128,
+    ):
         logger.info("Starting Indigo index build for %s", self.doc_type)
         tracker = get_cost_tracker()
         tracker.start_task("indexing", description=f"{self.doc_type} index build")
@@ -462,12 +465,8 @@ class IndexBuilder:
             # 5. 체크포인트 저장
             self._save_checkpoint(checkpoint_file, docs, entities, relations, failed_doc_ids)
 
-        # 6. 임베딩 생성
-        embeddings = self.generate_embeddings(entities, relations, docs)
-
-        # 7. 벡터DB + 그래프DB 저장
-        self.store_to_vector_db(entities, relations, docs, *embeddings)
-        self.store_to_graph_db(entities, relations)
+        # 6. 벡터DB + 그래프DB 저장
+        self.store_payload_streaming(docs, entities, relations, embedding_batch_size=embedding_batch_size)
 
         cost_result = tracker.end_task(**self.stats)
         if cost_result:
@@ -612,7 +611,13 @@ def main() -> None:
         else:
             raise ValueError("--phase store requires --manifest-file unless --allow-extraction-file-store is set.")
     else:
-        result = builder.run(args.data_file, clear=args.clear, resume=args.resume, batch_size=args.batch_size)
+        result = builder.run(
+            args.data_file,
+            clear=args.clear,
+            resume=args.resume,
+            batch_size=args.batch_size,
+            embedding_batch_size=args.embedding_batch_size,
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
