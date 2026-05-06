@@ -1,6 +1,6 @@
-"""
-ChromaDB 벡터 저장소
-6개 컬렉션으로 엔티티/관계를 문서 타입별로 저장
+﻿"""
+ChromaDB 踰≫꽣 ??μ냼
+6媛?而щ젆?섏쑝濡??뷀떚??愿怨꾨? 臾몄꽌 ??낅퀎濡????
 """
 
 import sys
@@ -21,19 +21,19 @@ except ImportError:
     raise
 
 
-# ChromaDB 배치 크기 제한 (최대 5461, 안전하게 5000 사용)
+# ChromaDB 諛곗튂 ?ш린 ?쒗븳 (理쒕? 5461, ?덉쟾?섍쾶 5000 ?ъ슜)
 CHROMADB_MAX_BATCH_SIZE = 5000
 
-# 컬렉션 이름 상수
+# 而щ젆???대쫫 ?곸닔
 COLLECTIONS = {
-    # 엔티티/관계 컬렉션 (LightRAG용)
+    # ?뷀떚??愿怨?而щ젆??(LightRAG??
     "patent_entities": "patent_entities",
     "patent_relations": "patent_relations",
     "article_entities": "article_entities",
     "article_relations": "article_relations",
     "project_entities": "project_entities",
     "project_relations": "project_relations",
-    # 청크 컬렉션 (Naive RAG용) - 문서 1개 = 청크 1개
+    # 泥?겕 而щ젆??(Naive RAG?? - 臾몄꽌 1媛?= 泥?겕 1媛?
     "patent_chunks": "patent_chunks",
     "article_chunks": "article_chunks",
     "project_chunks": "project_chunks",
@@ -41,16 +41,16 @@ COLLECTIONS = {
 
 
 class ChromaVectorStore:
-    """ChromaDB 기반 벡터 저장소 - 9개 컬렉션 관리 (엔티티/관계/청크)
+    """ChromaDB 湲곕컲 踰≫꽣 ??μ냼 - 9媛?而щ젆??愿由?(?뷀떚??愿怨?泥?겕)
 
-    싱글톤 패턴: 여러 retriever가 같은 인스턴스를 공유하여
-    동시 접근으로 인한 HNSW 인덱스 충돌 방지
+    ?깃????⑦꽩: ?щ윭 retriever媛 媛숈? ?몄뒪?댁뒪瑜?怨듭쑀?섏뿬
+    ?숈떆 ?묎렐?쇰줈 ?명븳 HNSW ?몃뜳??異⑸룎 諛⑹?
     """
 
-    _instances = {}  # persist_dir별로 인스턴스 관리
+    _instances = {}  # persist_dir蹂꾨줈 ?몄뒪?댁뒪 愿由?
 
     def __new__(cls, persist_dir: str = None):
-        # persist_dir별로 별도 인스턴스 생성
+        # persist_dir蹂꾨줈 蹂꾨룄 ?몄뒪?댁뒪 ?앹꽦
         key = persist_dir or "default"
         if key not in cls._instances:
             cls._instances[key] = super().__new__(cls)
@@ -59,25 +59,25 @@ class ChromaVectorStore:
 
     def __init__(self, persist_dir: str = None):
         """
-        ChromaDB 벡터 저장소 초기화
+        ChromaDB 踰≫꽣 ??μ냼 珥덇린??
 
         Args:
-            persist_dir: 영구 저장 디렉토리
+            persist_dir: ?곴뎄 ????붾젆?좊━
         """
-        # 이미 초기화되었으면 스킵
+        # ?대? 珥덇린?붾릺?덉쑝硫??ㅽ궢
         if getattr(self, '_initialized', False):
             return
 
         self.persist_dir = Path(persist_dir or RAG_STORE_DIR) / "chromadb"
         self.persist_dir.mkdir(parents=True, exist_ok=True)
 
-        # ChromaDB 클라이언트 초기화 (영구 저장)
+        # ChromaDB ?대씪?댁뼵??珥덇린??(?곴뎄 ???
         self.client = chromadb.PersistentClient(
             path=str(self.persist_dir),
             settings=Settings(anonymized_telemetry=False)
         )
 
-        # 9개 컬렉션 초기화
+        # 9媛?而щ젆??珥덇린??
         self.collections = {}
         self._init_collections()
 
@@ -85,77 +85,77 @@ class ChromaVectorStore:
         self._initialized = True
 
     def _init_collections(self):
-        """9개 컬렉션 생성/로드"""
+        """9媛?而щ젆???앹꽦/濡쒕뱶"""
         import time
 
         for collection_name in COLLECTIONS.values():
             self.collections[collection_name] = self.client.get_or_create_collection(
                 name=collection_name,
-                metadata={"hnsw:space": "cosine"}  # 코사인 유사도 사용
+                metadata={"hnsw:space": "cosine"}  # 肄붿궗???좎궗???ъ슜
             )
             count = self.collections[collection_name].count()
             print(f"  - {collection_name}: {count} items")
 
-        # HNSW 인덱스 안정화를 위한 대기 (ChromaDB 1.4.x 타이밍 이슈 해결)
+        # HNSW ?몃뜳???덉젙?붾? ?꾪븳 ?湲?(ChromaDB 1.4.x ??대컢 ?댁뒋 ?닿껐)
         time.sleep(1)
 
     def _get_collection_name(self, doc_type: str, item_type: str) -> str:
         """
-        문서 타입과 아이템 타입으로 컬렉션 이름 결정
+        臾몄꽌 ??낃낵 ?꾩씠????낆쑝濡?而щ젆???대쫫 寃곗젙
 
         Args:
             doc_type: patent / article / project
             item_type: entities / relations / chunks
 
         Returns:
-            컬렉션 이름
+            而щ젆???대쫫
         """
         return f"{doc_type}_{item_type}"
 
     def _make_chunk_id(self, doc_type: str, doc_id: str) -> str:
         """
-        chunk ID 생성 (doc_type + doc_id 기반 해시)
+        chunk ID ?앹꽦 (doc_type + doc_id 湲곕컲 ?댁떆)
 
         Args:
-            doc_type: 문서 타입
-            doc_id: 문서 ID
+            doc_type: 臾몄꽌 ???
+            doc_id: 臾몄꽌 ID
 
         Returns:
-            chunk ID 문자열
+            chunk ID 臾몄옄??
         """
         raw_id = f"{doc_type}_c_{doc_id}"
         hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
         return f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
     # =========================================================
-    # 중복 체크
+    # 以묐났 泥댄겕
     # =========================================================
 
     def filter_new_doc_ids(self, doc_type: str, doc_ids: List[str]) -> List[str]:
         """
-        ChromaDB chunks 컬렉션에 이미 존재하는 문서를 제외하고
-        새로 처리해야 할 doc_id 목록만 반환한다.
+        ChromaDB chunks 而щ젆?섏뿉 ?대? 議댁옱?섎뒗 臾몄꽌瑜??쒖쇅?섍퀬
+        ?덈줈 泥섎━?댁빞 ??doc_id 紐⑸줉留?諛섑솚?쒕떎.
 
         Args:
-            doc_type: 문서 타입 (patent / article / project)
-            doc_ids: 확인할 doc_id 목록
+            doc_type: 臾몄꽌 ???(patent / article / project)
+            doc_ids: ?뺤씤??doc_id 紐⑸줉
 
         Returns:
-            아직 인덱싱되지 않은 doc_id 목록
+            ?꾩쭅 ?몃뜳?깅릺吏 ?딆? doc_id 紐⑸줉
         """
         collection_name = self._get_collection_name(doc_type, "chunks")
         collection = self.collections.get(collection_name)
 
-        # 컬렉션이 없으면 전부 신규
+        # 而щ젆?섏씠 ?놁쑝硫??꾨? ?좉퇋
         if not collection:
             return [str(doc_id) for doc_id in doc_ids]
 
         normalized = [str(doc_id) for doc_id in doc_ids]
 
-        # doc_id → chunk_id 변환
+        # doc_id ??chunk_id 蹂??
         chunk_ids = [self._make_chunk_id(doc_type, doc_id) for doc_id in normalized]
 
-        # ChromaDB에 배치 조회 (이미 있는 chunk_id의 metadata에서 doc_id 추출)
+        # ChromaDB??諛곗튂 議고쉶 (?대? ?덈뒗 chunk_id??metadata?먯꽌 doc_id 異붿텧)
         existing_doc_ids: set[str] = set()
         for i in range(0, len(chunk_ids), CHROMADB_MAX_BATCH_SIZE):
             batch = chunk_ids[i:i + CHROMADB_MAX_BATCH_SIZE]
@@ -164,11 +164,11 @@ class ChromaVectorStore:
                 if meta:
                     existing_doc_ids.add(str(meta.get("doc_id", "")))
 
-        # 신규 doc_id만 반환
+        # ?좉퇋 doc_id留?諛섑솚
         return [doc_id for doc_id in normalized if doc_id not in existing_doc_ids]
 
     # =========================================================
-    # 추가
+    # 異붽?
     # =========================================================
 
     def add_entities(
@@ -178,12 +178,12 @@ class ChromaVectorStore:
         doc_type: str = "patent"
     ):
         """
-        엔티티를 컬렉션에 추가
+        ?뷀떚?곕? 而щ젆?섏뿉 異붽?
 
         Args:
-            entities: 엔티티 정보 리스트 (name, entity_type, description, source_doc_id)
-            embeddings: 엔티티 임베딩 벡터 (numpy array)
-            doc_type: 문서 타입 (patent/article/project)
+            entities: ?뷀떚???뺣낫 由ъ뒪??(name, entity_type, description, source_doc_id)
+            embeddings: ?뷀떚???꾨쿋??踰≫꽣 (numpy array)
+            doc_type: 臾몄꽌 ???(patent/article/project)
         """
         if len(entities) == 0:
             return
@@ -204,13 +204,13 @@ class ChromaVectorStore:
             entity["entity_type"] = as_text(entity.get("entity_type"), "UNKNOWN")
             if not entity["name"]:
                 continue
-            # 고유 ID 생성 (해시 사용으로 중복 방지)
+            # 怨좎쑀 ID ?앹꽦 (?댁떆 ?ъ슜?쇰줈 以묐났 諛⑹?)
             raw_id = f"{doc_type}_e_{entity['name']}_{entity['source_doc_id']}"
             hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
             entity_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
             ids.append(entity_id)
-            # LightRAG 방식: name + description
+            # LightRAG 諛⑹떇: name + description
             documents.append(f"{entity['name']}\n{entity.get('description', '')}")
             metadatas.append({
                 "name": entity["name"],
@@ -219,10 +219,10 @@ class ChromaVectorStore:
                 "doc_type": doc_type
             })
 
-        # 임베딩을 리스트로 변환
+        # ?꾨쿋?⑹쓣 由ъ뒪?몃줈 蹂??
         embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
 
-        # ChromaDB에 배치로 추가 (upsert로 중복 방지)
+        # ChromaDB??諛곗튂濡?異붽? (upsert濡?以묐났 諛⑹?)
         total = len(ids)
         for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
             batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
@@ -243,12 +243,12 @@ class ChromaVectorStore:
         doc_type: str = "patent"
     ):
         """
-        관계를 컬렉션에 추가
+        愿怨꾨? 而щ젆?섏뿉 異붽?
 
         Args:
-            relations: 관계 정보 리스트 (source_entity, target_entity, keywords, description, source_doc_id)
-            embeddings: 관계 임베딩 벡터
-            doc_type: 문서 타입 (patent/article/project)
+            relations: 愿怨??뺣낫 由ъ뒪??(source_entity, target_entity, keywords, description, source_doc_id)
+            embeddings: 愿怨??꾨쿋??踰≫꽣
+            doc_type: 臾몄꽌 ???(patent/article/project)
         """
         if len(relations) == 0:
             return
@@ -269,13 +269,13 @@ class ChromaVectorStore:
                 continue
             keywords = as_text(relation.get("keywords"))
 
-            # 고유 ID 생성
+            # 怨좎쑀 ID ?앹꽦
             raw_id = f"{doc_type}_r_{source}_{target}"
             hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
             rel_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
             ids.append(rel_id)
-            # LightRAG 방식: keywords를 맨 앞에 배치
+            # LightRAG 諛⑹떇: keywords瑜?留??욎뿉 諛곗튂
             rel_text = f"{keywords}\t{source}\n{target}\n{as_text(relation.get('description'))}"
             documents.append(rel_text)
             metadatas.append({
@@ -288,7 +288,7 @@ class ChromaVectorStore:
 
         embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
 
-        # ChromaDB에 배치로 추가
+        # ChromaDB??諛곗튂濡?異붽?
         total = len(ids)
         for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
             batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
@@ -309,12 +309,12 @@ class ChromaVectorStore:
         doc_type: str = "patent"
     ):
         """
-        문서 청크를 컬렉션에 추가 (Naive RAG용)
+        臾몄꽌 泥?겕瑜?而щ젆?섏뿉 異붽? (Naive RAG??
 
         Args:
-            chunks: 청크 정보 리스트 (doc_id, text, title 등)
-            embeddings: 청크 임베딩 벡터
-            doc_type: 문서 타입 (patent/article/project)
+            chunks: 泥?겕 ?뺣낫 由ъ뒪??(doc_id, text, title ??
+            embeddings: 泥?겕 ?꾨쿋??踰≫꽣
+            doc_type: 臾몄꽌 ???(patent/article/project)
         """
         if len(chunks) == 0:
             return
@@ -346,7 +346,7 @@ class ChromaVectorStore:
 
         embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
 
-        # ChromaDB에 배치로 추가
+        # ChromaDB??諛곗튂濡?異붽?
         total = len(ids)
         for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
             batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
@@ -361,7 +361,7 @@ class ChromaVectorStore:
         print(f"Added {len(chunks)} chunks to {collection_name}")
 
     # =========================================================
-    # 검색
+    # 寃??
     # =========================================================
 
     def _append_query_results(self, all_results: List[Dict], results: Dict, doc_type: str, item_type: str) -> None:
@@ -397,15 +397,15 @@ class ChromaVectorStore:
         max_dedup_retries: int = 2
     ) -> List[Dict]:
         """
-        엔티티 검색
+        ?뷀떚??寃??
 
         Args:
-            query_embedding: 쿼리 임베딩 벡터
-            doc_types: 검색할 문서 타입 리스트 (None이면 전체)
-            top_k: 반환할 결과 수
+            query_embedding: 荑쇰━ ?꾨쿋??踰≫꽣
+            doc_types: 寃?됲븷 臾몄꽌 ???由ъ뒪??(None?대㈃ ?꾩껜)
+            top_k: 諛섑솚??寃곌낵 ??
 
         Returns:
-            검색 결과 리스트
+            寃??寃곌낵 由ъ뒪??
         """
         if doc_types is None:
             doc_types = ["patent", "article", "project"]
@@ -464,68 +464,6 @@ class ChromaVectorStore:
 
         return best_results[:top_k]
 
-        all_results = []
-
-        for doc_type in doc_types:
-            collection_name = self._get_collection_name(doc_type, "entities")
-            if collection_name not in self.collections:
-                continue
-
-            collection = self.collections[collection_name]
-
-            if collection.count() == 0:
-                continue
-
-            try:
-                results = collection.query(
-                    query_embeddings=[query_embedding],
-                    n_results=top_k,
-                    include=["documents", "metadatas", "distances"]
-                )
-
-                if results and results["ids"][0]:
-                    for i, id in enumerate(results["ids"][0]):
-                        distance = results["distances"][0][i] if results["distances"] else 0
-                        similarity = 1 - distance
-
-                        all_results.append({
-                            "id": id,
-                            "document": results["documents"][0][i] if results["documents"] else "",
-                            "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                            "similarity": similarity,
-                            "doc_type": doc_type,
-                            "item_type": "entity"
-                        })
-
-            except Exception as e:
-                # HNSW 타이밍 이슈로 인한 재시도
-                import time
-                time.sleep(0.5)
-                try:
-                    results = collection.query(
-                        query_embeddings=[query_embedding],
-                        n_results=top_k,
-                        include=["documents", "metadatas", "distances"]
-                    )
-                    if results and results["ids"][0]:
-                        for i, id in enumerate(results["ids"][0]):
-                            distance = results["distances"][0][i] if results["distances"] else 0
-                            similarity = 1 - distance
-                            all_results.append({
-                                "id": id,
-                                "document": results["documents"][0][i] if results["documents"] else "",
-                                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                                "similarity": similarity,
-                                "doc_type": doc_type,
-                                "item_type": "entity"
-                            })
-                except Exception as e2:
-                    print(f"Search error in {collection_name}: {e2}")
-                    continue
-
-        all_results.sort(key=lambda x: x["similarity"], reverse=True)
-        return all_results[:top_k]
-
     def search_relations(
         self,
         query_embedding: Union[List[float], np.ndarray],
@@ -533,15 +471,15 @@ class ChromaVectorStore:
         top_k: int = None
     ) -> List[Dict]:
         """
-        관계 검색
+        愿怨?寃??
 
         Args:
-            query_embedding: 쿼리 임베딩 벡터
-            doc_types: 검색할 문서 타입 리스트
-            top_k: 반환할 결과 수
+            query_embedding: 荑쇰━ ?꾨쿋??踰≫꽣
+            doc_types: 寃?됲븷 臾몄꽌 ???由ъ뒪??
+            top_k: 諛섑솚??寃곌낵 ??
 
         Returns:
-            검색 결과 리스트
+            寃??寃곌낵 由ъ뒪??
         """
         if doc_types is None:
             doc_types = ["patent", "article", "project"]
@@ -585,7 +523,7 @@ class ChromaVectorStore:
                         })
 
             except Exception as e:
-                # HNSW 타이밍 이슈로 인한 재시도
+                # HNSW ??대컢 ?댁뒋濡??명븳 ?ъ떆??
                 import time
                 time.sleep(0.5)
                 try:
@@ -620,15 +558,15 @@ class ChromaVectorStore:
         top_k: int = None
     ) -> List[Dict]:
         """
-        청크 검색 (Naive RAG용)
+        泥?겕 寃??(Naive RAG??
 
         Args:
-            query_embedding: 쿼리 임베딩 벡터
-            doc_types: 검색할 문서 타입 리스트 (None이면 전체)
-            top_k: 반환할 결과 수
+            query_embedding: 荑쇰━ ?꾨쿋??踰≫꽣
+            doc_types: 寃?됲븷 臾몄꽌 ???由ъ뒪??(None?대㈃ ?꾩껜)
+            top_k: 諛섑솚??寃곌낵 ??
 
         Returns:
-            검색 결과 리스트
+            寃??寃곌낵 由ъ뒪??
         """
         if doc_types is None:
             doc_types = ["patent", "article", "project"]
@@ -672,7 +610,7 @@ class ChromaVectorStore:
                         })
 
             except Exception as e:
-                # HNSW 타이밍 이슈로 인한 재시도
+                # HNSW ??대컢 ?댁뒋濡??명븳 ?ъ떆??
                 import time
                 time.sleep(0.5)
                 try:
@@ -707,12 +645,12 @@ class ChromaVectorStore:
         top_k: int = None
     ) -> Dict[str, List[Dict]]:
         """
-        엔티티와 관계 모두 검색
+        ?뷀떚?곗? 愿怨?紐⑤몢 寃??
 
         Args:
-            query_embedding: 쿼리 임베딩 벡터
-            doc_types: 검색할 문서 타입 리스트
-            top_k: 각 타입별 반환할 결과 수
+            query_embedding: 荑쇰━ ?꾨쿋??踰≫꽣
+            doc_types: 寃?됲븷 臾몄꽌 ???由ъ뒪??
+            top_k: 媛???낅퀎 諛섑솚??寃곌낵 ??
 
         Returns:
             {"entities": [...], "relations": [...]}
@@ -723,11 +661,11 @@ class ChromaVectorStore:
         }
 
     # =========================================================
-    # 유틸리티
+    # ?좏떥由ы떚
     # =========================================================
 
     def get_stats(self) -> Dict[str, int]:
-        """컬렉션별 통계 반환"""
+        """而щ젆?섎퀎 ?듦퀎 諛섑솚"""
         stats = {}
         for name, collection in self.collections.items():
             stats[name] = collection.count()
@@ -735,11 +673,11 @@ class ChromaVectorStore:
 
     def delete_by_doc_id(self, doc_id: str, doc_type: str = "patent"):
         """
-        특정 문서의 엔티티/관계 삭제
+        ?뱀젙 臾몄꽌???뷀떚??愿怨???젣
 
         Args:
-            doc_id: 삭제할 문서 ID
-            doc_type: 문서 타입
+            doc_id: ??젣??臾몄꽌 ID
+            doc_type: 臾몄꽌 ???
         """
         for item_type in ["entities", "relations"]:
             collection_name = self._get_collection_name(doc_type, item_type)
@@ -750,7 +688,7 @@ class ChromaVectorStore:
         print(f"Deleted all items for doc_id: {doc_id}")
 
     def clear_all(self):
-        """모든 컬렉션 초기화 (주의!)"""
+        """紐⑤뱺 而щ젆??珥덇린??(二쇱쓽!)"""
         for name in COLLECTIONS.values():
             self.client.delete_collection(name)
 
