@@ -26,7 +26,11 @@ import sys
 # 상위 디렉토리를 경로에 추가
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.collection.database import get_db_connection, close_db_connection, get_article_data, COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM, COL_ARTICLE_PUBLSH_DT
-from indigo_pipeline.config import ARTICLE_DATA_FILE, ARTICLE_PAPER_NO_PROFESSOR_FILE
+from indigo_pipeline.config import (
+    ARTICLE_DATA_FILE,
+    ARTICLE_PAPER_NO_PROFESSOR_FILE,
+    INDIGO_BROWSER_HEADLESS,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -119,7 +123,7 @@ except Exception as e:
 results = existing_results.copy() if existing_results else []
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)  # 헤드리스 모드로 실행 (창 숨김)
+    browser = p.chromium.launch(headless=INDIGO_BROWSER_HEADLESS)
     context = browser.new_context()
     page = context.new_page()
 

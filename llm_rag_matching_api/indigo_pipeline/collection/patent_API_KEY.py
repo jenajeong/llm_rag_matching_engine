@@ -1,14 +1,18 @@
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 import os
-from indigo_pipeline.config import KIPRIS_PORTAL_ID, KIPRIS_PORTAL_PASSWORD
+from indigo_pipeline.config import (
+    INDIGO_BROWSER_HEADLESS,
+    KIPRIS_PORTAL_ID,
+    KIPRIS_PORTAL_PASSWORD,
+)
 
 ID = KIPRIS_PORTAL_ID
 PW = KIPRIS_PORTAL_PASSWORD
 
 def run():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=INDIGO_BROWSER_HEADLESS)
         context = browser.new_context()
         page = context.new_page()
 

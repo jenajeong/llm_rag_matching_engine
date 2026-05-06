@@ -4,7 +4,13 @@ import pandas as pd
 import json
 import re
 import sys
-from indigo_pipeline.config import NTIS_ID, NTIS_PASSWORD, PROJECT_DATA_DIR
+from indigo_pipeline.config import (
+    INDIGO_BROWSER_HEADLESS,
+    INDIGO_BROWSER_SLOW_MO,
+    NTIS_ID,
+    NTIS_PASSWORD,
+    PROJECT_DATA_DIR,
+)
 
 print("현재 실행 Python:", sys.executable)
 
@@ -296,8 +302,8 @@ def download_org_project_excel(page, org):
 def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False,
-            slow_mo=300
+            headless=INDIGO_BROWSER_HEADLESS,
+            slow_mo=INDIGO_BROWSER_SLOW_MO,
         )
 
         context = browser.new_context(
