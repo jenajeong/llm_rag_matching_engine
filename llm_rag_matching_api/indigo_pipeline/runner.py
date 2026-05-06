@@ -22,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-file", default=None, help="Only valid with --phase store and a single doc type.")
     parser.add_argument("--prepared-docs-file", default=None, help="Only valid with --phase extract and a single doc type.")
     parser.add_argument("--embedding-batch-size", type=int, default=128)
+    parser.add_argument(
+        "--allow-extraction-file-store",
+        action="store_true",
+        help="Allow legacy store from one extraction JSON file. Prefer --manifest-file for large runs.",
+    )
     return parser
 
 
@@ -65,12 +70,14 @@ def run_pipeline(args) -> list[dict]:
                     clear=clear_for_doc,
                     embedding_batch_size=args.embedding_batch_size,
                 )
-            else:
+            elif args.allow_extraction_file_store:
                 result = builder.run_store(
                     extraction_file=args.extraction_file,
                     clear=clear_for_doc,
                     embedding_batch_size=args.embedding_batch_size,
                 )
+            else:
+                raise ValueError("--phase store requires --manifest-file unless --allow-extraction-file-store is set.")
         else:
             result = builder.run(
                 data_file=args.data_file,

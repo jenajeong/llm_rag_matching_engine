@@ -567,6 +567,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest-file", default=None)
     parser.add_argument("--prepared-docs-file", default=None)
     parser.add_argument("--embedding-batch-size", type=int, default=128)
+    parser.add_argument(
+        "--allow-extraction-file-store",
+        action="store_true",
+        help="Allow legacy store from one extraction JSON file. Prefer --manifest-file for large runs.",
+    )
     return parser
 
 
@@ -598,12 +603,14 @@ def main() -> None:
                 clear=args.clear,
                 embedding_batch_size=args.embedding_batch_size,
             )
-        else:
+        elif args.allow_extraction_file_store:
             result = builder.run_store(
                 extraction_file=args.extraction_file,
                 clear=args.clear,
                 embedding_batch_size=args.embedding_batch_size,
             )
+        else:
+            raise ValueError("--phase store requires --manifest-file unless --allow-extraction-file-store is set.")
     else:
         result = builder.run(args.data_file, clear=args.clear, resume=args.resume, batch_size=args.batch_size)
     print(json.dumps(result, ensure_ascii=False, indent=2))
