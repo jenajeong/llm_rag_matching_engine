@@ -7,17 +7,19 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .. import config
 from ..core.safe import as_text
 from ..cost_tracker import get_cost_tracker
-from ..embedding import Embedder
 from ..io import load_json_records
-from ..llm import AsyncEntityRelationExtractor, EntityRelationExtractor
 from ..preprocessing import TextProcessor
-from ..stores import ChromaVectorStore, GraphStore
 from .merge import merge_duplicate_entities, merge_duplicate_relations
+
+if TYPE_CHECKING:
+    from ..embedding import Embedder
+    from ..llm import AsyncEntityRelationExtractor, EntityRelationExtractor
+    from ..stores import ChromaVectorStore, GraphStore
 
 try:
     from tqdm import tqdm
@@ -69,16 +71,14 @@ class IndexBuilder:
         self.doc_type = doc_type
         self.store_dir = Path(store_dir) if store_dir else None
         self.concurrency = max(1, int(concurrency or 1))
+        self.checkpoint_interval = checkpoint_interval
         self.text_processor = TextProcessor(min_text_length=min_text_length)
         self.use_async = self.concurrency > 1
-        self.extractor = (
-            AsyncEntityRelationExtractor(concurrency=self.concurrency, checkpoint_interval=checkpoint_interval)
-            if self.use_async
-            else EntityRelationExtractor()
-        )
-        self.embedder = Embedder(force_api=force_api)
-        self.vector_store = ChromaVectorStore(persist_dir=self.store_dir)
-        self.graph_store = GraphStore(store_dir=self.store_dir, doc_type=doc_type)
+        self._extractor = None
+        self.force_api = force_api
+        self._embedder = None
+        self._vector_store = None
+        self._graph_store = None
         self.stats: dict[str, Any] = {
             "docs_loaded": 0,
             "docs_processed": 0,
@@ -92,6 +92,42 @@ class IndexBuilder:
             "failed_docs": 0,
             "errors": 0,
         }
+
+    @property
+    def embedder(self) -> "Embedder":
+        if self._embedder is None:
+            from ..embedding import Embedder
+
+            self._embedder = Embedder(force_api=self.force_api)
+        return self._embedder
+
+    @property
+    def extractor(self):
+        if self._extractor is None:
+            from ..llm import AsyncEntityRelationExtractor, EntityRelationExtractor
+
+            self._extractor = (
+                AsyncEntityRelationExtractor(concurrency=self.concurrency, checkpoint_interval=self.checkpoint_interval)
+                if self.use_async
+                else EntityRelationExtractor()
+            )
+        return self._extractor
+
+    @property
+    def vector_store(self) -> "ChromaVectorStore":
+        if self._vector_store is None:
+            from ..stores import ChromaVectorStore
+
+            self._vector_store = ChromaVectorStore(persist_dir=self.store_dir)
+        return self._vector_store
+
+    @property
+    def graph_store(self) -> "GraphStore":
+        if self._graph_store is None:
+            from ..stores import GraphStore
+
+            self._graph_store = GraphStore(store_dir=self.store_dir, doc_type=self.doc_type)
+        return self._graph_store
 
     def load_data(self, file_path: str | Path | None = None) -> list[dict[str, Any]]:
         path = Path(file_path) if file_path else config.TRAIN_FILES[self.doc_type]
@@ -215,6 +251,82 @@ class IndexBuilder:
         self.graph_store.save()
         logger.info("Graph stats: %s", self.graph_store.get_stats())
 
+    def get_extraction_file(self, path: str | Path | None = None) -> Path:
+        if path:
+            return Path(path)
+        return config.CHECKPOINT_DIR / "extraction_artifacts" / f"{self.doc_type}_extraction.json"
+
+    def prepare_documents(self, data_file: str | Path | None = None, clear: bool = False) -> list[dict[str, Any]]:
+        raw_data = self.load_data(data_file)
+        docs = self.process_documents(raw_data)
+        if clear:
+            self.stats["docs_new"] = len(docs)
+            return docs
+        return self.filter_new_documents(docs)
+
+    def run_extract(
+        self,
+        data_file: str | Path | None = None,
+        clear: bool = False,
+        batch_size: int = 10,
+        output_file: str | Path | None = None,
+        prepared_docs_file: str | Path | None = None,
+    ) -> dict[str, Any]:
+        logger.info("Starting Indigo extraction phase for %s", self.doc_type)
+        tracker = get_cost_tracker()
+        tracker.start_task("index_extraction", description=f"{self.doc_type} GPT extraction")
+
+        if prepared_docs_file:
+            docs = json.loads(Path(prepared_docs_file).read_text(encoding="utf-8"))
+            self.stats["docs_processed"] = len(docs)
+            self.stats["docs_new"] = len(docs)
+        else:
+            docs = self.prepare_documents(data_file=data_file, clear=clear)
+        if not docs:
+            logger.info("All documents already indexed. Nothing to extract.")
+            tracker.end_task(**self.stats)
+            artifact_file = self._save_extraction_artifact(output_file, docs, [], [], [])
+            return {"artifact_file": str(artifact_file), **self.stats}
+
+        entities, relations, failed_doc_ids = self.extract_entities_relations(docs, batch_size=batch_size)
+        self._save_failed_docs(failed_doc_ids, len(docs))
+
+        if entities:
+            entities = merge_duplicate_entities(entities)
+            relations = merge_duplicate_relations(relations)
+            self.stats["entities_after_merge"] = len(entities)
+            self.stats["relations_after_merge"] = len(relations)
+        else:
+            logger.warning("No entities extracted. Chunks can still be stored in store phase.")
+
+        artifact_file = self._save_extraction_artifact(output_file, docs, entities, relations, failed_doc_ids)
+        cost_result = tracker.end_task(**self.stats)
+        if cost_result:
+            logger.info("Estimated extraction API cost: $%.6f", cost_result.get("total_cost_usd", 0.0))
+        return {"artifact_file": str(artifact_file), **self.stats}
+
+    def run_store(
+        self,
+        extraction_file: str | Path | None = None,
+        clear: bool = False,
+    ) -> dict[str, Any]:
+        logger.info("Starting Indigo embedding/store phase for %s", self.doc_type)
+        artifact = self._load_extraction_artifact(extraction_file)
+        docs = artifact.get("docs", [])
+        entities = artifact.get("entities", [])
+        relations = artifact.get("relations", [])
+        self.stats.update(artifact.get("stats", {}))
+
+        if clear:
+            self.vector_store.clear_all()
+            self.graph_store.clear()
+
+        embeddings = self.generate_embeddings(entities, relations, docs)
+        self.store_to_vector_db(entities, relations, docs, *embeddings)
+        self.store_to_graph_db(entities, relations)
+        logger.info("Store phase complete. Stats=%s", self.stats)
+        return self.stats
+
     def run(self, data_file: str | Path | None = None, clear: bool = False, resume: bool = False, batch_size: int = 10):
         logger.info("Starting Indigo index build for %s", self.doc_type)
         tracker = get_cost_tracker()
@@ -303,6 +415,33 @@ class IndexBuilder:
         self.store_to_graph_db(entities, relations)
         return {"retried": len(docs), "success": len(docs) - len(still_failed), "still_failed": len(still_failed)}
 
+    def _save_extraction_artifact(self, path: str | Path | None, docs, entities, relations, failed_doc_ids) -> Path:
+        artifact_file = self.get_extraction_file(path)
+        artifact_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "doc_type": self.doc_type,
+            "docs": docs,
+            "entities": entities,
+            "relations": relations,
+            "failed_doc_ids": failed_doc_ids,
+            "stats": self.stats.copy(),
+            "saved_at": datetime.now().isoformat(),
+        }
+        tmp_file = artifact_file.with_suffix(f"{artifact_file.suffix}.tmp")
+        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_file.replace(artifact_file)
+        logger.info("Saved extraction artifact: %s", artifact_file)
+        return artifact_file
+
+    def _load_extraction_artifact(self, path: str | Path | None) -> dict[str, Any]:
+        artifact_file = self.get_extraction_file(path)
+        if not artifact_file.exists():
+            raise FileNotFoundError(f"Extraction artifact not found: {artifact_file}")
+        artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
+        if artifact.get("doc_type") != self.doc_type:
+            raise ValueError(f"Artifact doc_type mismatch: {artifact.get('doc_type')} != {self.doc_type}")
+        return artifact
+
     def _save_failed_docs(self, failed_doc_ids: list[str], total_docs: int) -> None:
         if not failed_doc_ids:
             return
@@ -341,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--checkpoint-interval", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=10)
+    parser.add_argument("--phase", choices=["full", "extract", "store"], default="full")
+    parser.add_argument("--extraction-file", default=None)
+    parser.add_argument("--prepared-docs-file", default=None)
     return parser
 
 
@@ -357,6 +499,16 @@ def main() -> None:
     )
     if args.retry_failed:
         result = builder.retry_failed(max_docs=args.max_retry)
+    elif args.phase == "extract":
+        result = builder.run_extract(
+            data_file=args.data_file,
+            clear=args.clear,
+            batch_size=args.batch_size,
+            output_file=args.extraction_file,
+            prepared_docs_file=args.prepared_docs_file,
+        )
+    elif args.phase == "store":
+        result = builder.run_store(extraction_file=args.extraction_file, clear=args.clear)
     else:
         result = builder.run(args.data_file, clear=args.clear, resume=args.resume, batch_size=args.batch_size)
     print(json.dumps(result, ensure_ascii=False, indent=2))

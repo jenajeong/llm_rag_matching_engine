@@ -17,6 +17,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=10)
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--max-retry", type=int, default=None)
+    parser.add_argument("--phase", choices=["full", "extract", "store"], default="full")
+    parser.add_argument("--extraction-file", default=None, help="Only valid when --doc-type is not all.")
+    parser.add_argument("--prepared-docs-file", default=None, help="Only valid with --phase extract and a single doc type.")
     return parser
 
 
@@ -25,10 +28,15 @@ def run_pipeline(args) -> list[dict]:
     doc_types = DOC_TYPES if args.doc_type == "all" else [args.doc_type]
     if args.data_file and args.doc_type == "all":
         raise ValueError("--data-file can only be used with a single --doc-type.")
-    for doc_type in doc_types:
+    if args.extraction_file and args.doc_type == "all":
+        raise ValueError("--extraction-file can only be used with a single --doc-type.")
+    if args.prepared_docs_file and args.doc_type == "all":
+        raise ValueError("--prepared-docs-file can only be used with a single --doc-type.")
+    for index, doc_type in enumerate(doc_types):
         from .indexing.builder import IndexBuilder, setup_logging
 
         setup_logging(doc_type)
+        clear_for_doc = args.clear and index == 0
         builder = IndexBuilder(
             doc_type=doc_type,
             force_api=args.force_api,
@@ -38,10 +46,20 @@ def run_pipeline(args) -> list[dict]:
         )
         if args.retry_failed:
             result = builder.retry_failed(max_docs=args.max_retry)
+        elif args.phase == "extract":
+            result = builder.run_extract(
+                data_file=args.data_file,
+                clear=args.clear,
+                batch_size=args.batch_size,
+                output_file=args.extraction_file,
+                prepared_docs_file=args.prepared_docs_file,
+            )
+        elif args.phase == "store":
+            result = builder.run_store(extraction_file=args.extraction_file, clear=clear_for_doc)
         else:
             result = builder.run(
                 data_file=args.data_file,
-                clear=args.clear,
+                clear=clear_for_doc,
                 resume=args.resume,
                 batch_size=args.batch_size,
             )
