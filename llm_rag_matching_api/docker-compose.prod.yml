@@ -40,7 +40,7 @@ services:
     env_file:
       - .env
     environment:
-      - CUDA_VISIBLE_DEVICES=1    # GPU 1 전용 (API는 GPU 0)
+      - CUDA_VISIBLE_DEVICES=0,1  # GPU 전체 사용 (API 중단 중)
     volumes:
       - model_cache:/root/.cache/huggingface
       - /indigo/search-api/llm_rag_matching_api/data:/app/data

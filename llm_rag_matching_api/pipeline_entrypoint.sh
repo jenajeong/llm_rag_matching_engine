@@ -2,6 +2,7 @@
 # =============================================================
 # Indigo Pipeline Entrypoint
 # 수집 → 필터링 → GPT 추출 → 임베딩 저장 전체 파이프라인
+# 실행 중 API 컨테이너 중지 → 완료 후 재시작
 # =============================================================
 
 set -e
@@ -13,6 +14,13 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$LOG_DIR/pipeline_${TIMESTAMP}.log"
 
 echo "[$(date)] Pipeline started" | tee -a "$LOG_FILE"
+
+# =============================================================
+# API 컨테이너 중지 (GPU 전체 확보)
+# =============================================================
+echo "[$(date)] Stopping API container..." | tee -a "$LOG_FILE"
+docker stop search_api || true
+echo "[$(date)] API container stopped." | tee -a "$LOG_FILE"
 
 # =============================================================
 # 1. 수집 + 필터링 (collection_runner)
@@ -33,7 +41,8 @@ python -m indigo_pipeline.collection_runner \
 
 EXIT_CODE=${PIPESTATUS[0]}
 if [ $EXIT_CODE -ne 0 ]; then
-    echo "[$(date)] Collection failed (exit $EXIT_CODE). Skipping indexing." | tee -a "$LOG_FILE"
+    echo "[$(date)] Collection failed (exit $EXIT_CODE). Restarting API and aborting." | tee -a "$LOG_FILE"
+    docker start search_api
     exit $EXIT_CODE
 fi
 
@@ -58,5 +67,14 @@ python -m indigo_pipeline.indexing.split_runner \
     --retention-days 7 \
     --max-runs 3 \
     2>&1 | tee -a "$LOG_FILE"
+
+echo "[$(date)] Indexing complete." | tee -a "$LOG_FILE"
+
+# =============================================================
+# API 컨테이너 재시작
+# =============================================================
+echo "[$(date)] Restarting API container..." | tee -a "$LOG_FILE"
+docker start search_api
+echo "[$(date)] API container restarted." | tee -a "$LOG_FILE"
 
 echo "[$(date)] Pipeline finished." | tee -a "$LOG_FILE"
