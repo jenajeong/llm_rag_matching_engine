@@ -1,11 +1,15 @@
 import json
 
 from django.http import JsonResponse
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 
 
 @csrf_exempt
 def recommend(request):
+    if request.method == "GET":
+        return render(request, "search/recommend.html")
+
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed. Use POST."}, status=405)
 
