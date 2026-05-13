@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>INDIGO 교수 추천 검색</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #14233c;
+      --muted: #69778d;
+      --line: #d9e2ef;
+      --surface: #ffffff;
+      --soft: #f4f8fd;
+      --brand: #005bac;
+      --brand-dark: #003f87;
+      --brand-light: #e7f2ff;
+      --accent: #00a6b2;
+      --warning: #f26b21;
+      --shadow: 18px 22px 30px rgba(23, 31, 44, 0.08);
+      --soft-shadow: 10px 14px 24px rgba(23, 31, 44, 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", Arial, sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      letter-spacing: 0;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: block;
+    }
+
+    .search-panel {
+      background: #ffffff;
+      border-bottom: 1px solid #f1f1f1;
+      padding: 0 clamp(18px, 4vw, 56px) 38px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      max-width: 1550px;
+      min-height: 102px;
+      margin: 0 auto 16px;
+    }
+
+    .brand-mark {
+      width: 116px;
+      height: 50px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #ffffff;
+      color: var(--brand-dark);
+      font-size: 31px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      position: relative;
+    }
+
+    .brand-mark::after {
+      content: "";
+      width: 28px;
+      height: 28px;
+      border: 7px solid #ffae16;
+      border-left-color: transparent;
+      border-bottom-color: transparent;
+      border-radius: 50%;
+      position: absolute;
+      right: -4px;
+      top: 2px;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.25;
+      color: #3a3a3a;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .field {
+      display: grid;
+      gap: 9px;
+      margin-bottom: 0;
+      position: relative;
+    }
+
+    label {
+      font-size: 14px;
+      font-weight: 700;
+      color: #213b62;
+    }
+
+    #searchForm {
+      max-width: 1550px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(280px, 625px) 68px auto;
+      justify-content: center;
+      gap: 13px;
+      align-items: center;
+      background: #f2f2f2;
+      border: 0;
+      border-radius: 11px;
+      box-shadow: none;
+      padding: 48px 52px;
+    }
+
+    .query-field {
+      grid-column: 1;
+    }
+
+    .doc-field {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 90px minmax(0, 670px);
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      margin-top: 18px;
+    }
+
+    .advanced-field {
+      grid-column: 1 / -1;
+      max-width: 782px;
+      width: 100%;
+      justify-self: center;
+      margin-top: 6px;
+    }
+
+    .doc-field > label,
+    .advanced-field > label,
+    .query-field > label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .doc-field::before {
+      content: "검색 문서";
+      font-size: 20px;
+      font-weight: 800;
+      color: #2f2f2f;
+      text-align: right;
+    }
+
+    .advanced-details {
+      width: 100%;
+    }
+
+    .advanced-details summary {
+      width: 100%;
+      min-height: 34px;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: #4f4f4f;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 800;
+      list-style: none;
+      user-select: none;
+    }
+
+    .advanced-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .advanced-details summary::after {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid #777777;
+      border-bottom: 2px solid #777777;
+      color: #777777;
+      transform: rotate(45deg) translateY(-2px);
+    }
+
+    .advanced-details[open] summary::after {
+      transform: rotate(225deg) translateY(-1px);
+    }
+
+    .query-input {
+      width: 100%;
+      height: 68px;
+      min-height: 68px;
+      resize: none;
+      border: 1px solid #d8d8d8;
+      border-radius: 5px;
+      padding: 0 16px;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 68px;
+      font-size: 20px;
+      overflow: hidden;
+    }
+
+    .query-input::placeholder {
+      color: #a9a9a9;
+    }
+
+    .query-input:focus,
+    input[type="number"]:focus {
+      outline: 3px solid rgba(0, 91, 172, 0.16);
+      border-color: var(--brand);
+      background: #fff;
+    }
+
+    .type-options {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .type-options label {
+      border: 1px solid #d9d9d9;
+      border-radius: 999px;
+      min-height: 45px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: #ffffff;
+      color: #3a3a3a;
+      font-size: 17px;
+      cursor: pointer;
+      user-select: none;
+      padding: 0 18px;
+    }
+
+    .type-options input {
+      accent-color: var(--brand);
+    }
+
+    .advanced {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(160px, 1fr));
+      gap: 16px;
+      margin-top: 10px;
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid #e3e3e3;
+      box-shadow: none;
+    }
+
+    .number-field {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 106px;
+      align-items: center;
+      gap: 14px;
+      min-height: 72px;
+      padding: 14px 16px;
+      border: 1px solid #ededed;
+      border-radius: 18px;
+      background: #fafafa;
+    }
+
+    .number-field span {
+      color: #333333;
+      font-size: 15px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .number-field small {
+      display: block;
+      color: #808080;
+      font-size: 12px;
+      font-weight: 500;
+      margin-top: 2px;
+    }
+
+    .advanced input {
+      width: 100%;
+      height: 45px;
+      border: 1px solid #d9d9d9;
+      border-radius: 999px;
+      padding: 0 14px;
+      background: #ffffff;
+      font-size: 15px;
+      text-align: center;
+    }
+
+    .primary-button,
+    .reset-button,
+    .secondary-button {
+      width: 100%;
+      min-height: 68px;
+      border: 0;
+      border-radius: 7px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-weight: 800;
+    }
+
+    .primary-button {
+      width: 68px;
+      background: #666666;
+      color: #fff;
+      box-shadow: none;
+      font-size: 0;
+      position: relative;
+    }
+
+    .primary-button::before {
+      content: "";
+      width: 20px;
+      height: 20px;
+      border: 3px solid #ffffff;
+      border-radius: 50%;
+      position: absolute;
+      top: 20px;
+      left: 19px;
+    }
+
+    .primary-button::after {
+      content: "";
+      width: 16px;
+      height: 3px;
+      background: #ffffff;
+      border-radius: 999px;
+      transform: rotate(45deg);
+      position: absolute;
+      top: 42px;
+      left: 39px;
+    }
+
+    .primary-button:hover {
+      background: #555555;
+    }
+
+    .reset-button {
+      width: 122px;
+      color: #2f2f2f;
+      background: transparent;
+      box-shadow: none;
+      font-size: 19px;
+      gap: 10px;
+      padding: 0;
+      justify-content: flex-start;
+    }
+
+    .reset-button::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border: 3px solid #2f2f2f;
+      border-right-color: transparent;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .primary-button:disabled,
+    .reset-button:disabled,
+    .secondary-button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .status {
+      min-height: 24px;
+      max-width: 1550px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      margin: 12px auto 0;
+    }
+
+    #searchForm .status {
+      grid-column: 1 / -1;
+      width: 100%;
+      max-width: 760px;
+      justify-self: center;
+      margin: 4px 0 0;
+    }
+
+    .status.error {
+      color: #c0351b;
+      font-weight: 700;
+    }
+
+    .results-panel {
+      max-width: 1550px;
+      margin: 0 auto;
+      padding: 38px clamp(18px, 4vw, 40px) 60px;
+    }
+
+    .results-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(25px, 2.4vw, 34px);
+      line-height: 1.2;
+      color: #1e1e1e;
+    }
+
+    .summary {
+      margin: 7px 0 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .secondary-button {
+      max-width: 190px;
+      min-height: 42px;
+      border: 1px solid #ffd6df;
+      color: var(--brand-dark);
+      background: #fff4f7;
+      box-shadow: none;
+      flex: 0 0 auto;
+      border-radius: 7px;
+    }
+
+    .empty {
+      min-height: 420px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 24px;
+      background: #ffffff;
+      box-shadow: var(--shadow);
+      color: var(--muted);
+      text-align: center;
+      padding: 28px;
+      line-height: 1.7;
+    }
+
+    .result-list {
+      display: grid;
+      gap: 24px;
+    }
+
+    .professor-card {
+      background: var(--surface);
+      border: 0;
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 42px 52px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .professor-card::after {
+      content: "추천교수";
+      min-width: 106px;
+      height: 41px;
+      padding: 0 16px;
+      border-radius: 7px;
+      background: #ffe2e9;
+      color: #e32255;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 800;
+      position: absolute;
+      top: 0;
+      right: 0;
+    }
+
+    .card-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 22px;
+      padding-right: 94px;
+    }
+
+    .rank-name {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .rank {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      background: #d0d0d0;
+      color: #ffffff;
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+
+    .professor-name {
+      font-size: 28px;
+      font-weight: 900;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      margin-top: 20px;
+      color: #42526a;
+      font-size: 20px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .score {
+      text-align: right;
+      color: var(--brand-dark);
+      font-size: 22px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .score span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+
+    .score-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 22px 0;
+    }
+
+    .score-item {
+      border: 1px solid #eeeeee;
+      border-radius: 16px;
+      background: #fafafa;
+      padding: 16px 18px;
+      min-width: 0;
+    }
+
+    .score-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .score-item strong {
+      font-size: 18px;
+    }
+
+    .documents {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .document {
+      border-top: 1px solid #eeeeee;
+      padding-top: 14px;
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 16px;
+      color: #2b3645;
+      line-height: 1.55;
+      font-size: 16px;
+    }
+
+    .doc-type {
+      color: var(--brand-dark);
+      font-weight: 800;
+    }
+
+    .doc-title {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .doc-detail {
+      color: var(--muted);
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 920px) {
+      #searchForm {
+        grid-template-columns: 1fr;
+      }
+
+      .query-field,
+      .doc-field,
+      .advanced-field {
+        grid-column: 1;
+      }
+
+      .doc-field {
+        grid-template-columns: 1fr;
+        justify-content: stretch;
+      }
+
+      .advanced-field {
+        max-width: none;
+      }
+
+      .doc-field::before {
+        text-align: left;
+        font-size: 16px;
+      }
+
+      .primary-button {
+        width: 100%;
+      }
+
+      .reset-button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .primary-button::before {
+        left: calc(50% - 18px);
+      }
+
+      .primary-button::after {
+        left: calc(50% + 2px);
+      }
+
+      .results-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .secondary-button {
+        max-width: none;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .search-panel,
+      .results-panel {
+        padding: 24px 16px;
+      }
+
+      .type-options,
+      .advanced,
+      .score-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .number-field {
+        grid-template-columns: 1fr;
+      }
+
+      #searchForm {
+        padding: 28px 18px;
+      }
+
+      .brand {
+        min-height: 82px;
+      }
+
+      .brand-mark {
+        width: 98px;
+        font-size: 27px;
+      }
+
+      .professor-card {
+        padding: 34px 24px;
+      }
+
+      .card-top {
+        grid-template-columns: 1fr;
+        padding-right: 0;
+      }
+
+      .score {
+        text-align: left;
+      }
+
+      .document {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="search-panel" aria-label="검색 조건">
+      <div class="brand">
+        <div class="brand-mark">INDig</div>
+        <div>
+          <strong>INU산학매칭지원</strong>
+          <span>INu DIGital innOvation platform</span>
+        </div>
+      </div>
+
+      <form id="searchForm">
+        <div class="field query-field">
+          <label for="query">검색어</label>
+          <textarea class="query-input" id="query" name="query" placeholder="검색어 입력" required></textarea>
+        </div>
+
+        <button class="primary-button" id="searchButton" type="submit">검색</button>
+        <button class="reset-button" id="resetButton" type="button">초기화</button>
+
+        <div class="field doc-field">
+          <label>검색 문서</label>
+          <div class="type-options">
+            <label><input type="checkbox" name="doc_types" value="article" checked> #논문</label>
+            <label><input type="checkbox" name="doc_types" value="patent" checked> #특허</label>
+            <label><input type="checkbox" name="doc_types" value="project" checked> #과제</label>
+          </div>
+        </div>
+
+        <div class="field advanced-field">
+          <label>상세 조건</label>
+          <details class="advanced-details">
+            <summary>상세 조건 열기</summary>
+            <div class="advanced">
+              <div class="number-field">
+                <span>검색 후보 수<small>많을수록 넓게 탐색</small></span>
+                <input type="number" id="retrievalTopK" min="1" max="100" value="20" aria-label="검색 후보 수">
+              </div>
+              <div class="number-field">
+                <span>유사도 기준<small>낮을수록 결과 범위 확대</small></span>
+                <input type="number" id="similarityThreshold" min="0" max="1" step="0.01" value="0.3" aria-label="유사도 기준">
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+
+    <section class="results-panel" aria-label="검색 결과">
+      <div class="results-head">
+        <div>
+          <h1>추천 결과</h1>
+          <p class="summary" id="summary">검색어를 입력하면 관련 교수가 점수 순으로 표시됩니다.</p>
+        </div>
+        <button class="secondary-button" id="reportButton" type="button" disabled>PDF 보고서</button>
+      </div>
+
+      <div id="results" class="empty">아직 검색 결과가 없습니다.</div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("searchForm");
+    const queryInput = document.getElementById("query");
+    const searchButton = document.getElementById("searchButton");
+    const resetButton = document.getElementById("resetButton");
+    const reportButton = document.getElementById("reportButton");
+    const statusEl = document.getElementById("status");
+    const summaryEl = document.getElementById("summary");
+    const resultsEl = document.getElementById("results");
+    let currentSearchId = "";
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.classList.toggle("error", isError);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatScore(value) {
+      const number = Number(value || 0);
+      return number.toLocaleString("ko-KR", { maximumFractionDigits: 4 });
+    }
+
+    function docTypeLabel(type) {
+      return { article: "논문", patent: "특허", project: "과제" }[type] || type;
+    }
+
+    function collectDocuments(professor) {
+      const documents = professor.documents || {};
+      const scores = professor.document_scores || {};
+      return ["article", "patent", "project"].flatMap((type) => {
+        const scoreByNo = new Map((scores[type] || []).map((item) => [String(item.no ?? ""), item.score]));
+        return (documents[type] || []).slice(0, 3).map((doc) => ({
+          type,
+          title: doc.title || doc.name || doc.THSS_NM || doc.tech_nm || "제목 없음",
+          year: doc.year || doc.PBLC_YY || doc.APPL_DT || doc.RSCH_STT_YY || "",
+          score: scoreByNo.get(String(doc.no ?? "")),
+        }));
+      }).slice(0, 6);
+    }
+
+    function renderResults(data) {
+      const ranked = data?.ahp_results?.ranked_professors || [];
+      currentSearchId = data.search_id || "";
+      reportButton.disabled = !currentSearchId;
+      summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명의 교수를 찾았습니다.`;
+
+      if (!ranked.length) {
+        resultsEl.className = "empty";
+        resultsEl.textContent = "조건에 맞는 추천 결과가 없습니다.";
+        return;
+      }
+
+      resultsEl.className = "result-list";
+      resultsEl.innerHTML = ranked.slice(0, 20).map((professor) => {
+        const info = professor.professor_info || {};
+        const name = info.NM || info.name || "이름 없음";
+        const department = [info.COLG_NM, info.HG_NM, info.WKGD_NM].filter(Boolean).join(" · ");
+        const email = info.EMAIL || "";
+        const typeScores = professor.scores_by_type || {};
+        const docs = collectDocuments(professor);
+
+        return `
+          <article class="professor-card">
+            <div class="card-top">
+              <div>
+                <div class="rank-name">
+                  <div class="rank">${escapeHtml(professor.rank || "")}</div>
+                  <div>
+                    <div class="professor-name">${escapeHtml(name)}</div>
+                    <div class="meta">${escapeHtml(department || "소속 정보 없음")}${email ? " · " + escapeHtml(email) : ""}</div>
+                  </div>
+                </div>
+              </div>
+              <div class="score"><span>종합 점수</span>${formatScore(professor.total_score)}</div>
+            </div>
+            <div class="score-grid">
+              <div class="score-item"><span>논문</span><strong>${formatScore(typeScores.article)}</strong></div>
+              <div class="score-item"><span>특허</span><strong>${formatScore(typeScores.patent)}</strong></div>
+              <div class="score-item"><span>과제</span><strong>${formatScore(typeScores.project)}</strong></div>
+            </div>
+            <div class="documents">
+              ${docs.length ? docs.map((doc) => `
+                <div class="document">
+                  <div class="doc-type">${escapeHtml(docTypeLabel(doc.type))}</div>
+                  <div>
+                    <div class="doc-title">${escapeHtml(doc.title)}</div>
+                    <div class="doc-detail">${escapeHtml([doc.year, doc.score != null ? "문서 점수 " + formatScore(doc.score) : ""].filter(Boolean).join(" · "))}</div>
+                  </div>
+                </div>
+              `).join("") : `<div class="document"><div class="doc-type">근거</div><div class="doc-detail">표시할 문서 정보가 없습니다.</div></div>`}
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = queryInput.value.trim();
+      if (!query) {
+        setStatus("검색어를 입력해 주세요.", true);
+        queryInput.focus();
+        return;
+      }
+
+      const docTypes = Array.from(document.querySelectorAll('input[name="doc_types"]:checked')).map((item) => item.value);
+      if (!docTypes.length) {
+        setStatus("검색 문서를 하나 이상 선택해 주세요.", true);
+        return;
+      }
+
+      const payload = {
+        query,
+        doc_types: docTypes,
+        retrieval_top_k: Number(document.getElementById("retrievalTopK").value || 20),
+        similarity_threshold: Number(document.getElementById("similarityThreshold").value || 0.3),
+      };
+
+      currentSearchId = "";
+      reportButton.disabled = true;
+      searchButton.disabled = true;
+      setStatus("검색 중입니다. 모델과 벡터 저장소를 조회하는 동안 잠시 기다려 주세요.");
+
+      try {
+        const response = await fetch(window.location.pathname || "/api/v1/search/recommend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "검색 요청에 실패했습니다.");
+        }
+        renderResults(data);
+        setStatus("검색이 완료되었습니다.");
+      } catch (error) {
+        resultsEl.className = "empty";
+        resultsEl.textContent = "검색 결과를 불러오지 못했습니다.";
+        setStatus(error.message, true);
+      } finally {
+        searchButton.disabled = false;
+      }
+    });
+
+    resetButton.addEventListener("click", () => {
+      form.reset();
+      currentSearchId = "";
+      reportButton.disabled = true;
+      summaryEl.textContent = "검색어를 입력하면 관련 교수가 점수 순으로 표시됩니다.";
+      resultsEl.className = "empty";
+      resultsEl.textContent = "아직 검색 결과가 없습니다.";
+      setStatus("");
+      queryInput.focus();
+    });
+
+    reportButton.addEventListener("click", async () => {
+      if (!currentSearchId) {
+        return;
+      }
+
+      reportButton.disabled = true;
+      setStatus("PDF 보고서를 생성하고 있습니다.");
+
+      try {
+        const response = await fetch("/api/v1/report/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ search_id: currentSearchId }),
+        });
+        if (!response.ok) {
+          let detail = "보고서 생성에 실패했습니다.";
+          try {
+            const data = await response.json();
+            detail = data.detail || detail;
+          } catch (error) {}
+          throw new Error(detail);
+        }
+
+        const blob = await response.blob();
+        const filenameHeader = response.headers.get("Content-Disposition") || "";
+        const filenameMatch = filenameHeader.match(/filename="?([^"]+)"?/);
+        const filename = filenameMatch ? filenameMatch[1] : "indigo_report.pdf";
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        setStatus("PDF 보고서가 생성되었습니다.");
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        reportButton.disabled = !currentSearchId;
+      }
+    });
+  </script>
+</body>
+</html>
