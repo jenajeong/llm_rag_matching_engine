@@ -52,10 +52,19 @@
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 18px;
       max-width: 1550px;
       min-height: 102px;
       margin: 0 auto 16px;
+    }
+
+    .inu-logo {
+      width: 124px;
+      height: 70px;
+      flex: 0 0 auto;
+      display: block;
+      object-fit: contain;
+      object-position: center;
     }
 
     .brand-mark {
@@ -70,6 +79,7 @@
       font-weight: 900;
       letter-spacing: -1px;
       position: relative;
+      flex: 0 0 auto;
     }
 
     .brand-mark::after {
@@ -90,6 +100,7 @@
       font-size: 24px;
       line-height: 1.25;
       color: #3a3a3a;
+      word-break: keep-all;
     }
 
     .brand span {
@@ -97,6 +108,7 @@
       color: var(--muted);
       font-size: 13px;
       margin-top: 2px;
+      word-break: keep-all;
     }
 
     .field {
@@ -597,7 +609,7 @@
 
     .card-top {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
       gap: 14px;
       align-items: start;
       margin-bottom: 22px;
@@ -635,48 +647,6 @@
       font-size: 20px;
       line-height: 1.45;
       overflow-wrap: anywhere;
-    }
-
-    .score {
-      text-align: right;
-      color: var(--brand-dark);
-      font-size: 22px;
-      font-weight: 900;
-      white-space: nowrap;
-    }
-
-    .score span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      margin-bottom: 3px;
-    }
-
-    .score-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin: 22px 0;
-    }
-
-    .score-item {
-      border: 1px solid #eeeeee;
-      border-radius: 16px;
-      background: #fafafa;
-      padding: 16px 18px;
-      min-width: 0;
-    }
-
-    .score-item span {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 4px;
-    }
-
-    .score-item strong {
-      font-size: 18px;
     }
 
     .documents {
@@ -771,8 +741,7 @@
       }
 
       .type-options,
-      .advanced,
-      .score-grid {
+      .advanced {
         grid-template-columns: 1fr;
       }
 
@@ -786,11 +755,18 @@
 
       .brand {
         min-height: 82px;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
       .brand-mark {
         width: 98px;
         font-size: 27px;
+      }
+
+      .inu-logo {
+        width: 98px;
+        height: 56px;
       }
 
       .professor-card {
@@ -800,10 +776,6 @@
       .card-top {
         grid-template-columns: 1fr;
         padding-right: 0;
-      }
-
-      .score {
-        text-align: left;
       }
 
       .document {
@@ -816,6 +788,7 @@
   <main class="page">
     <section class="search-panel" aria-label="검색 조건">
       <div class="brand">
+        <img class="inu-logo" alt="INU 로고" src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB3aWR0aD0iNzAuOTA2MDgybW0iCiAgIGhlaWdodD0iMzkuNjI1OTk2bW0iCiAgIHZpZXdCb3g9IjAgMCA3MC45MDYwODIgMzkuNjI1OTk2IgogICB2ZXJzaW9uPSIxLjEiCiAgIGlkPSJzdmc1IgogICBpbmtzY2FwZTp2ZXJzaW9uPSIxLjEgKGM2OGUyMmMzODcsIDIwMjEtMDUtMjMpIgogICBzb2RpcG9kaTpkb2NuYW1lPSLsnbjsspzrjIAuc3ZnIgogICB4bWxuczppbmtzY2FwZT0iaHR0cDovL3d3dy5pbmtzY2FwZS5vcmcvbmFtZXNwYWNlcy9pbmtzY2FwZSIKICAgeG1sbnM6c29kaXBvZGk9Imh0dHA6Ly9zb2RpcG9kaS5zb3VyY2Vmb3JnZS5uZXQvRFREL3NvZGlwb2RpLTAuZHRkIgogICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxzb2RpcG9kaTpuYW1lZHZpZXcKICAgICBpZD0ibmFtZWR2aWV3NyIKICAgICBwYWdlY29sb3I9IiNmZmZmZmYiCiAgICAgYm9yZGVyY29sb3I9IiM2NjY2NjYiCiAgICAgYm9yZGVyb3BhY2l0eT0iMS4wIgogICAgIGlua3NjYXBlOnBhZ2VzaGFkb3c9IjIiCiAgICAgaW5rc2NhcGU6cGFnZW9wYWNpdHk9IjAuMCIKICAgICBpbmtzY2FwZTpwYWdlY2hlY2tlcmJvYXJkPSIwIgogICAgIGlua3NjYXBlOmRvY3VtZW50LXVuaXRzPSJtbSIKICAgICBzaG93Z3JpZD0iZmFsc2UiCiAgICAgZml0LW1hcmdpbi10b3A9IjAiCiAgICAgZml0LW1hcmdpbi1sZWZ0PSIwIgogICAgIGZpdC1tYXJnaW4tcmlnaHQ9IjAiCiAgICAgZml0LW1hcmdpbi1ib3R0b209IjAiCiAgICAgaW5rc2NhcGU6em9vbT0iMC43MTQ0NjQwOSIKICAgICBpbmtzY2FwZTpjeD0iMTUzLjk2MTU1IgogICAgIGlua3NjYXBlOmN5PSIxMTUuNDcxMTYiCiAgICAgaW5rc2NhcGU6d2luZG93LXdpZHRoPSIxOTIwIgogICAgIGlua3NjYXBlOndpbmRvdy1oZWlnaHQ9Ijk5MSIKICAgICBpbmtzY2FwZTp3aW5kb3cteD0iMjM5MSIKICAgICBpbmtzY2FwZTp3aW5kb3cteT0iLTkiCiAgICAgaW5rc2NhcGU6d2luZG93LW1heGltaXplZD0iMSIKICAgICBpbmtzY2FwZTpjdXJyZW50LWxheWVyPSJnMTUiIC8+CiAgPGRlZnMKICAgICBpZD0iZGVmczIiPgogICAgPGNsaXBQYXRoCiAgICAgICBjbGlwUGF0aFVuaXRzPSJ1c2VyU3BhY2VPblVzZSIKICAgICAgIGlkPSJjbGlwUGF0aDMxIj4KICAgICAgPHBhdGgKICAgICAgICAgZD0iTSAwLDU5NS4yNzYgSCA4NDEuODkgViAwIEggMCBaIgogICAgICAgICBpZD0icGF0aDI5IiAvPgogICAgPC9jbGlwUGF0aD4KICA8L2RlZnM+CiAgPGcKICAgICBpbmtzY2FwZTpsYWJlbD0i66CI7J207Ja0IDEiCiAgICAgaW5rc2NhcGU6Z3JvdXBtb2RlPSJsYXllciIKICAgICBpZD0ibGF5ZXIxIgogICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC02NC4zNDkzMywtMTE3LjgxMTE2KSI+CiAgICA8ZwogICAgICAgaWQ9ImcxNSIKICAgICAgIGlua3NjYXBlOmxhYmVsPSJJTlUg7JuM65Oc66eI7YGsIgogICAgICAgdHJhbnNmb3JtPSJtYXRyaXgoMC4yNzQwNTUxOSwwLDAsLTAuMjc0MDU1MTksLTE1LjU0MzczMiwyMTguOTI5MzYpIj4KICAgICAgPGcKICAgICAgICAgaWQ9ImcxNyIKICAgICAgICAgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMzc3LjAyODMsMjI0LjM3ODkpIj4KICAgICAgICA8cGF0aAogICAgICAgICAgIGQ9Ik0gMCwwIDE4LjQ1MSwxOC40NTkgSCAtMzMuNzYgViA3MC42NzQgTCAtNTIuMjE0LDUyLjIxNSBWIDAgWiIKICAgICAgICAgICBzdHlsZT0iZmlsbDojZmNhZjE2O2ZpbGwtb3BhY2l0eToxO2ZpbGwtcnVsZTpub256ZXJvO3N0cm9rZTpub25lIgogICAgICAgICAgIGlkPSJwYXRoMTkiIC8+CiAgICAgIDwvZz4KICAgICAgPGcKICAgICAgICAgaWQ9ImcyMSIKICAgICAgICAgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNDE3LjE5MDksMzY4Ljk3MDIpIj4KICAgICAgICA8cGF0aAogICAgICAgICAgIGQ9Im0gMCwwIC0xOC40NSwtMTguNDUyIGggNTIuMjEyIHYgLTUyLjIxMSBsIDE4LjQ1MywxOC40NTYgViAwIFoiCiAgICAgICAgICAgc3R5bGU9ImZpbGw6I2ZjYWYxNjtmaWxsLW9wYWNpdHk6MTtmaWxsLXJ1bGU6bm9uemVybztzdHJva2U6bm9uZSIKICAgICAgICAgICBpZD0icGF0aDIzIiAvPgogICAgICA8L2c+CiAgICAgIDxnCiAgICAgICAgIGlkPSJnMjUiPgogICAgICAgIDxnCiAgICAgICAgICAgaWQ9ImcyNyIKICAgICAgICAgICBjbGlwLXBhdGg9InVybCgjY2xpcFBhdGgzMSkiPgogICAgICAgICAgPGcKICAgICAgICAgICAgIGlkPSJnMzMiCiAgICAgICAgICAgICB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzMjAuMjU3OCwzNDEuNTM2NikiPgogICAgICAgICAgICA8cGF0aAogICAgICAgICAgICAgICBkPSJtIDAsMCBoIC0yOC43MzYgdiAtMS4wNzYgYyAwLjAwNCwtMC4wMDYgMC4wMDksLTAuMDEgMC4wMTYsLTAuMDEzIGggLTAuMDE1IGMgMi42MDQsLTMuMzQxIDQuMTczLC02LjUyMSA0LjI0NCwtMTIuMDE3IHYgLTcyLjM3IGMgMC4wMzYsLTAuNjc5IDAuMjI1LC0xLjEwNyAwLjgyMSwtMS4zODYgMC43ODcsLTAuMzcgMS4zODgsLTAuMDEyIDIuNDcsMS4wNjggbCAxNi45NTUsMTYuOTU1IHYgNTUuODc3IGMgMC4wOTcsNS40MDkgMS42NjIsOC41NiA0LjI0NSwxMS44NzMgaCAtMC4wMTggYyAwLjAwNSwwLjAwMyAwLjAxMSwwLjAwNyAwLjAxOCwwLjAxMyB6IgogICAgICAgICAgICAgICBzdHlsZT0iZmlsbDojMDE0OTlhO2ZpbGwtb3BhY2l0eToxO2ZpbGwtcnVsZTpub256ZXJvO3N0cm9rZTpub25lIgogICAgICAgICAgICAgICBpZD0icGF0aDM1IiAvPgogICAgICAgICAgPC9nPgogICAgICAgICAgPGcKICAgICAgICAgICAgIGlkPSJnMzciCiAgICAgICAgICAgICB0cmFuc2Zvcm09InRyYW5zbGF0ZSg1NTAuMjUxLDM0MS41MzY2KSI+CiAgICAgICAgICAgIDxwYXRoCiAgICAgICAgICAgICAgIGQ9Im0gMCwwIGggLTI4Ljc0NyB2IC0xLjA3NiBjIDAuMDA1LC0wLjAwNiAwLjAxMiwtMC4wMSAwLjAxNSwtMC4wMTMgaCAtMC4wMDEgYyAyLjUxNywtMy4yMzEgNC4wNzIsLTYuMjk5IDQuMjM2LC0xMS40NjUgdiAtNDMuMzgxIGMgMCwtOC43MTEgLTcuMDU4LC0xNS43NzMgLTE1Ljc2NywtMTUuNzczIC04LjcwNCwwIC0xNS43NjYsNy4wNjIgLTE1Ljc2NiwxNS43NzMgViAtNC40MyBjIDAsMS4wMTIgLTAuMDM4LDIuMDUxIC0wLjgzMiwyLjMzMiAtMC44MSwwLjI5NyAtMS4yNTUsMC4wNSAtMi4zMjcsLTEuMDI4IHYgMC4wMDYgbCAtMTcuMDksLTE3LjA5IHYgLTM0LjMwMiBjIDAsLTE5Ljg5IDE2LjEyNywtMzYuMDA5IDM2LjAxNSwtMzYuMDA5IDE5Ljg5MiwwIDM2LjAxNiwxNi4xMTkgMzYuMDE2LDM2LjAwOSB2IDQxLjE0MiBjIDAuMDIxLDUuNjY1IDEuNjA0LDguODg1IDQuMjQ4LDEyLjI4MSBoIC0wLjAxNSBjIDAuMDA1LDAuMDAzIDAuMDEsMC4wMDcgMC4wMTUsMC4wMTMgeiIKICAgICAgICAgICAgICAgc3R5bGU9ImZpbGw6IzAxNDk5YTtmaWxsLW9wYWNpdHk6MTtmaWxsLXJ1bGU6bm9uemVybztzdHJva2U6bm9uZSIKICAgICAgICAgICAgICAgaWQ9InBhdGgzOSIgLz4KICAgICAgICAgIDwvZz4KICAgICAgICAgIDxnCiAgICAgICAgICAgICBpZD0iZzQxIgogICAgICAgICAgICAgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNDM3LjY4MzYsMzQxLjUzNjYpIj4KICAgICAgICAgICAgPHBhdGgKICAgICAgICAgICAgICAgZD0ibSAwLDAgaCAtMjguNzQ2IHYgLTEuMDc2IGMgMC4wMSwtMC4wMDYgMC4wMTQsLTAuMDEgMC4wMTcsLTAuMDEzIGggLTAuMDE3IGMgMi42NDgsLTMuMzk2IDQuMjMsLTYuNjE2IDQuMjUzLC0xMi4yODEgdiAtMzcuMzkgbCAtMjguNDM0LDQ1Ljc1OSAtMjMuMzQ3LC0yMy4zNSB2IC00Ny4yNzcgMC4wMDIgYyAwLC01Ljc0MyAtMS41ODksLTguOTc4IC00LjI1NCwtMTIuNCB2IC0xLjA3NyBoIDI4Ljc0MSB2IDEuMDc3IGMgLTAuMDA2LDAgLTAuMDA4LDAuMDAzIC0wLjAxMywwLjAwNyAtMi41NjIsMy4yOTIgLTQuMTI0LDYuNDIgLTQuMjM2LDExLjc2OSB2IDM3LjkwMiBsIDI4LjQzLC00NS43NTcgMjMuMzUsMjMuMzU1IHYgNDcuNTk5IGMgMC4wNiw1LjUyNiAxLjYzMyw4LjcwOSA0LjI0NiwxMi4wNjIgaCAtMC4wMDQgYyAwLjAwNCwwLjAwMyAwLjAwOCwwLjAwNyAwLjAxNCwwLjAxMyB6IgogICAgICAgICAgICAgICBzdHlsZT0iZmlsbDojMDE0OTlhO2ZpbGwtb3BhY2l0eToxO2ZpbGwtcnVsZTpub256ZXJvO3N0cm9rZTpub25lIgogICAgICAgICAgICAgICBpZD0icGF0aDQzIiAvPgogICAgICAgICAgPC9nPgogICAgICAgIDwvZz4KICAgICAgPC9nPgogICAgPC9nPgogIDwvZz4KPC9zdmc+Cg==">
         <div class="brand-mark">INDig</div>
         <div>
           <strong>INU산학매칭지원</strong>
@@ -865,7 +838,7 @@
       <div class="results-head">
         <div>
           <h1>추천 결과</h1>
-          <p class="summary" id="summary">검색어를 입력하면 관련 교수가 점수 순으로 표시됩니다.</p>
+          <p class="summary" id="summary">검색어를 입력하면 관련 교수 상위 5명이 표시됩니다.</p>
         </div>
         <button class="secondary-button" id="reportButton" type="button" disabled>PDF 보고서</button>
       </div>
@@ -947,25 +920,17 @@
         .replaceAll("'", "&#039;");
     }
 
-    function formatScore(value) {
-      const number = Number(value || 0);
-      return number.toLocaleString("ko-KR", { maximumFractionDigits: 4 });
-    }
-
     function docTypeLabel(type) {
       return { article: "논문", patent: "특허", project: "과제" }[type] || type;
     }
 
     function collectDocuments(professor) {
       const documents = professor.documents || {};
-      const scores = professor.document_scores || {};
       return ["article", "patent", "project"].flatMap((type) => {
-        const scoreByNo = new Map((scores[type] || []).map((item) => [String(item.no ?? ""), item.score]));
         return (documents[type] || []).slice(0, 3).map((doc) => ({
           type,
           title: doc.title || doc.name || doc.THSS_NM || doc.tech_nm || "제목 없음",
           year: doc.year || doc.PBLC_YY || doc.APPL_DT || doc.RSCH_STT_YY || "",
-          score: scoreByNo.get(String(doc.no ?? "")),
         }));
       }).slice(0, 6);
     }
@@ -974,7 +939,7 @@
       const ranked = data?.ahp_results?.ranked_professors || [];
       currentSearchId = data.search_id || "";
       reportButton.disabled = !currentSearchId;
-      summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명의 교수를 찾았습니다.`;
+      summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명 중 상위 ${Math.min(ranked.length, 5).toLocaleString("ko-KR")}명을 표시합니다.`;
 
       if (!ranked.length) {
         resultsEl.className = "empty";
@@ -983,12 +948,11 @@
       }
 
       resultsEl.className = "result-list";
-      resultsEl.innerHTML = ranked.slice(0, 20).map((professor) => {
+      resultsEl.innerHTML = ranked.slice(0, 5).map((professor) => {
         const info = professor.professor_info || {};
         const name = info.NM || info.name || "이름 없음";
         const department = [info.COLG_NM, info.HG_NM, info.WKGD_NM].filter(Boolean).join(" · ");
         const email = info.EMAIL || "";
-        const typeScores = professor.scores_by_type || {};
         const docs = collectDocuments(professor);
 
         return `
@@ -1003,12 +967,6 @@
                   </div>
                 </div>
               </div>
-              <div class="score"><span>종합 점수</span>${formatScore(professor.total_score)}</div>
-            </div>
-            <div class="score-grid">
-              <div class="score-item"><span>논문</span><strong>${formatScore(typeScores.article)}</strong></div>
-              <div class="score-item"><span>특허</span><strong>${formatScore(typeScores.patent)}</strong></div>
-              <div class="score-item"><span>과제</span><strong>${formatScore(typeScores.project)}</strong></div>
             </div>
             <div class="documents">
               ${docs.length ? docs.map((doc) => `
@@ -1016,7 +974,7 @@
                   <div class="doc-type">${escapeHtml(docTypeLabel(doc.type))}</div>
                   <div>
                     <div class="doc-title">${escapeHtml(doc.title)}</div>
-                    <div class="doc-detail">${escapeHtml([doc.year, doc.score != null ? "문서 점수 " + formatScore(doc.score) : ""].filter(Boolean).join(" · "))}</div>
+                    <div class="doc-detail">${escapeHtml([doc.year].filter(Boolean).join(" · "))}</div>
                   </div>
                 </div>
               `).join("") : `<div class="document"><div class="doc-type">근거</div><div class="doc-detail">표시할 문서 정보가 없습니다.</div></div>`}
@@ -1087,7 +1045,7 @@
       currentSearchId = "";
       clearCachedReport();
       reportButton.disabled = true;
-      summaryEl.textContent = "검색어를 입력하면 관련 교수가 점수 순으로 표시됩니다.";
+      summaryEl.textContent = "검색어를 입력하면 관련 교수 상위 5명이 표시됩니다.";
       resultsEl.className = "empty";
       resultsEl.textContent = "아직 검색 결과가 없습니다.";
       setStatus("");
