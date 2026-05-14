@@ -894,6 +894,7 @@
     const resultsEl = document.getElementById("results");
     let currentSearchId = "";
     let noticeTimer = null;
+    let cachedReport = null;
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -919,6 +920,22 @@
       if (autoHide > 0) {
         noticeTimer = window.setTimeout(hideNotice, autoHide);
       }
+    }
+
+    function clearCachedReport() {
+      if (cachedReport?.url) {
+        URL.revokeObjectURL(cachedReport.url);
+      }
+      cachedReport = null;
+    }
+
+    function downloadBlobUrl(url, filename) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     }
 
     function escapeHtml(value) {
@@ -1032,6 +1049,7 @@
       };
 
       currentSearchId = "";
+      clearCachedReport();
       reportButton.disabled = true;
       searchButton.disabled = true;
       showNotice("검색 중입니다. 잠시만 기다려 주세요.", { busy: true });
@@ -1067,6 +1085,7 @@
     resetButton.addEventListener("click", () => {
       form.reset();
       currentSearchId = "";
+      clearCachedReport();
       reportButton.disabled = true;
       summaryEl.textContent = "검색어를 입력하면 관련 교수가 점수 순으로 표시됩니다.";
       resultsEl.className = "empty";
@@ -1078,6 +1097,12 @@
 
     reportButton.addEventListener("click", async () => {
       if (!currentSearchId) {
+        return;
+      }
+
+      if (cachedReport?.searchId === currentSearchId) {
+        downloadBlobUrl(cachedReport.url, cachedReport.filename);
+        showNotice("저장된 PDF 보고서를 내려받습니다.", { autoHide: 1000 });
         return;
       }
 
@@ -1103,14 +1128,14 @@
         const filenameHeader = response.headers.get("Content-Disposition") || "";
         const filenameMatch = filenameHeader.match(/filename="?([^"]+)"?/);
         const filename = filenameMatch ? filenameMatch[1] : "indigo_report.pdf";
+        clearCachedReport();
         const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
+        cachedReport = {
+          searchId: currentSearchId,
+          url,
+          filename,
+        };
+        downloadBlobUrl(url, filename);
         showNotice("PDF 보고서가 생성되었습니다.", { autoHide: 1300 });
       } catch (error) {
         showNotice(error.message, { error: true, autoHide: 2400 });
@@ -1118,6 +1143,8 @@
         reportButton.disabled = !currentSearchId;
       }
     });
+
+    window.addEventListener("beforeunload", clearCachedReport);
   </script>
 </body>
 </html>
