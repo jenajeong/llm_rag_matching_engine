@@ -395,25 +395,119 @@
     }
 
     .status {
-      min-height: 24px;
-      max-width: 1550px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-      margin: 12px auto 0;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     #searchForm .status {
       grid-column: 1 / -1;
-      width: 100%;
-      max-width: 760px;
-      justify-self: center;
-      margin: 4px 0 0;
     }
 
     .status.error {
       color: #c0351b;
       font-weight: 700;
+    }
+
+    .notice-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(55, 55, 55, 0.42);
+      backdrop-filter: blur(2px);
+    }
+
+    .notice-overlay.is-active {
+      display: flex;
+    }
+
+    .notice-card {
+      width: min(360px, 100%);
+      min-height: 178px;
+      border-radius: 24px;
+      background: #ffffff;
+      box-shadow: 18px 22px 36px rgba(0, 0, 0, 0.16);
+      display: grid;
+      place-items: center;
+      gap: 16px;
+      padding: 30px 28px;
+      text-align: center;
+    }
+
+    .notice-spinner {
+      width: 48px;
+      height: 48px;
+      border: 5px solid #e8edf4;
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: notice-spin 0.9s linear infinite;
+    }
+
+    .notice-overlay:not(.is-busy) .notice-spinner {
+      animation: none;
+      border-color: var(--brand);
+      position: relative;
+    }
+
+    .notice-overlay:not(.is-busy) .notice-spinner::after {
+      content: "";
+      width: 19px;
+      height: 10px;
+      border-left: 4px solid var(--brand);
+      border-bottom: 4px solid var(--brand);
+      transform: rotate(-45deg);
+      position: absolute;
+      top: 14px;
+      left: 11px;
+    }
+
+    .notice-overlay.is-error .notice-spinner {
+      border-color: #c0351b;
+    }
+
+    .notice-overlay.is-error .notice-spinner::before,
+    .notice-overlay.is-error .notice-spinner::after {
+      content: "";
+      width: 22px;
+      height: 4px;
+      background: #c0351b;
+      border: 0;
+      border-radius: 999px;
+      position: absolute;
+      top: 17px;
+      left: 8px;
+    }
+
+    .notice-overlay.is-error .notice-spinner::before {
+      transform: rotate(45deg);
+    }
+
+    .notice-overlay.is-error .notice-spinner::after {
+      transform: rotate(-45deg);
+    }
+
+    .notice-message {
+      color: #202020;
+      font-size: 19px;
+      font-weight: 800;
+      line-height: 1.45;
+      word-break: keep-all;
+    }
+
+    @keyframes notice-spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     .results-panel {
@@ -780,6 +874,13 @@
     </section>
   </main>
 
+  <div class="notice-overlay" id="noticeOverlay" role="alert" aria-live="assertive" aria-hidden="true">
+    <div class="notice-card">
+      <div class="notice-spinner" aria-hidden="true"></div>
+      <div class="notice-message" id="noticeMessage"></div>
+    </div>
+  </div>
+
   <script>
     const form = document.getElementById("searchForm");
     const queryInput = document.getElementById("query");
@@ -787,13 +888,37 @@
     const resetButton = document.getElementById("resetButton");
     const reportButton = document.getElementById("reportButton");
     const statusEl = document.getElementById("status");
+    const noticeOverlay = document.getElementById("noticeOverlay");
+    const noticeMessage = document.getElementById("noticeMessage");
     const summaryEl = document.getElementById("summary");
     const resultsEl = document.getElementById("results");
     let currentSearchId = "";
+    let noticeTimer = null;
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
       statusEl.classList.toggle("error", isError);
+    }
+
+    function hideNotice() {
+      window.clearTimeout(noticeTimer);
+      noticeOverlay.classList.remove("is-active", "is-busy", "is-error");
+      noticeOverlay.setAttribute("aria-hidden", "true");
+    }
+
+    function showNotice(message, options = {}) {
+      const { busy = false, error = false, autoHide = 0 } = options;
+      window.clearTimeout(noticeTimer);
+      setStatus(message, error);
+      noticeMessage.textContent = message;
+      noticeOverlay.classList.toggle("is-busy", busy);
+      noticeOverlay.classList.toggle("is-error", error);
+      noticeOverlay.classList.add("is-active");
+      noticeOverlay.setAttribute("aria-hidden", "false");
+
+      if (autoHide > 0) {
+        noticeTimer = window.setTimeout(hideNotice, autoHide);
+      }
     }
 
     function escapeHtml(value) {
@@ -888,14 +1013,14 @@
       event.preventDefault();
       const query = queryInput.value.trim();
       if (!query) {
-        setStatus("검색어를 입력해 주세요.", true);
+        showNotice("검색어를 입력해 주세요.", { error: true, autoHide: 1600 });
         queryInput.focus();
         return;
       }
 
       const docTypes = Array.from(document.querySelectorAll('input[name="doc_types"]:checked')).map((item) => item.value);
       if (!docTypes.length) {
-        setStatus("검색 문서를 하나 이상 선택해 주세요.", true);
+        showNotice("검색 문서를 하나 이상 선택해 주세요.", { error: true, autoHide: 1800 });
         return;
       }
 
@@ -909,7 +1034,7 @@
       currentSearchId = "";
       reportButton.disabled = true;
       searchButton.disabled = true;
-      setStatus("검색 중입니다. 모델과 벡터 저장소를 조회하는 동안 잠시 기다려 주세요.");
+      showNotice("검색 중입니다. 잠시만 기다려 주세요.", { busy: true });
 
       try {
         const response = await fetch(window.location.pathname || "/api/v1/search/recommend", {
@@ -922,13 +1047,20 @@
           throw new Error(data.detail || "검색 요청에 실패했습니다.");
         }
         renderResults(data);
-        setStatus("검색이 완료되었습니다.");
+        showNotice("검색이 완료되었습니다.", { autoHide: 1200 });
       } catch (error) {
         resultsEl.className = "empty";
         resultsEl.textContent = "검색 결과를 불러오지 못했습니다.";
-        setStatus(error.message, true);
+        showNotice(error.message, { error: true, autoHide: 2200 });
       } finally {
         searchButton.disabled = false;
+      }
+    });
+
+    queryInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
       }
     });
 
@@ -940,6 +1072,7 @@
       resultsEl.className = "empty";
       resultsEl.textContent = "아직 검색 결과가 없습니다.";
       setStatus("");
+      hideNotice();
       queryInput.focus();
     });
 
@@ -949,7 +1082,7 @@
       }
 
       reportButton.disabled = true;
-      setStatus("PDF 보고서를 생성하고 있습니다.");
+      showNotice("PDF 보고서를 생성하고 있습니다.", { busy: true });
 
       try {
         const response = await fetch("/api/v1/report/generate", {
@@ -978,9 +1111,9 @@
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        setStatus("PDF 보고서가 생성되었습니다.");
+        showNotice("PDF 보고서가 생성되었습니다.", { autoHide: 1300 });
       } catch (error) {
-        setStatus(error.message, true);
+        showNotice(error.message, { error: true, autoHide: 2400 });
       } finally {
         reportButton.disabled = !currentSearchId;
       }
