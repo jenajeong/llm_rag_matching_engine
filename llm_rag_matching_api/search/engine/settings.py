@@ -18,13 +18,13 @@ DATA_TRAIN_ARTICLE_FILE = TRAIN_DATA_DIR / "article_filtering.json"
 DATA_TRAIN_PATENT_FILE = TRAIN_DATA_DIR / "patent_filtering.json"
 DATA_TRAIN_PROJECT_FILE = TRAIN_DATA_DIR / "project_filtering.json"
 
-RAG_STORE_DIR = DATA_DIR / "rag_store_v2"
+RAG_STORE_DIR = Path(os.environ.get("INDIGO_RAG_STORE_DIR", DATA_DIR / "rag_store_v2"))
 
 QWEN_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
 QWEN_EMBEDDING_DIM = 4096
 OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_EMBEDDING_DIM = 1536
-LLM_MODEL = "gpt-4o-mini"
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 REPORT_SUMMARY_MAX_CHARS = int(os.environ.get("REPORT_SUMMARY_MAX_CHARS", "500"))
 REPORT_MAX_TOKENS = int(os.environ.get("REPORT_MAX_TOKENS", "4096"))
 
