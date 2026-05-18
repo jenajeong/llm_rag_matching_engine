@@ -18,6 +18,23 @@ from .prompts import COMPLETION_DELIMITER, RECORD_DELIMITER, TUPLE_DELIMITER, fo
 logger = logging.getLogger(__name__)
 
 
+def _is_reasoning_model(model: str) -> bool:
+    normalized = as_text(model).lower()
+    return normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _chat_completion_options(model: str, output_tokens: int) -> dict:
+    if _is_reasoning_model(model):
+        options = {"max_completion_tokens": output_tokens}
+        if config.LLM_REASONING_EFFORT:
+            options["reasoning_effort"] = config.LLM_REASONING_EFFORT
+        return options
+    return {
+        "temperature": 0.0,
+        "max_tokens": output_tokens,
+    }
+
+
 class EntityRelationExtractor:
     def __init__(self, api_key: str | None = None, model: str | None = None):
         key = api_key or config.OPENAI_API_KEY
@@ -60,8 +77,7 @@ class EntityRelationExtractor:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    max_tokens=4096,
+                    **_chat_completion_options(self.model, 4096),
                 )
                 log_chat_usage("entity_extraction", self.model, response)
                 return response.choices[0].message.content or ""
@@ -229,8 +245,7 @@ class AsyncEntityRelationExtractor(EntityRelationExtractor):
                     response = await self.client.chat.completions.create(
                         model=self.model,
                         messages=[{"role": "user", "content": prompt}],
-                        temperature=0.0,
-                        max_tokens=4096,
+                        **_chat_completion_options(self.model, 4096),
                     )
                 log_chat_usage("entity_extraction_async", self.model, response)
                 self.stats["success"] += 1
