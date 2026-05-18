@@ -14,8 +14,24 @@ from .cost_tracker import log_chat_usage
 from .embedder import Embedder
 from .graph_store import GraphStore
 from .prompts import format_keyword_extraction_prompt, RAG_RESPONSE_PROMPT
-from .settings import OPENAI_API_KEY, LLM_MODEL, RETRIEVAL_TOP_K, SIMILARITY_THRESHOLD
+from .settings import OPENAI_API_KEY, LLM_MODEL, LLM_REASONING_EFFORT, RETRIEVAL_TOP_K, SIMILARITY_THRESHOLD
 from .vector_store import ChromaVectorStore
+
+
+def _is_reasoning_model(model: str) -> bool:
+    return str(model or "").lower().startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _chat_completion_options(model: str, output_tokens: int) -> Dict:
+    if _is_reasoning_model(model):
+        options = {"max_completion_tokens": output_tokens}
+        if LLM_REASONING_EFFORT:
+            options["reasoning_effort"] = LLM_REASONING_EFFORT
+        return options
+    return {
+        "temperature": 0.0,
+        "max_tokens": output_tokens,
+    }
 
 
 @dataclass
@@ -82,8 +98,7 @@ class HybridRetriever:
             response = self.llm_client.chat.completions.create(
                 model=self.llm_model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=800
+                **_chat_completion_options(self.llm_model, 800),
             )
 
             # 비용 추적
@@ -596,8 +611,7 @@ class HybridRetriever:
             response = self.llm_client.chat.completions.create(
                 model=self.llm_model,
                 messages=[{"role": "user", "content": full_prompt}],
-                temperature=0.0,
-                max_tokens=1000
+                **_chat_completion_options(self.llm_model, 1000),
             )
 
             # 비용 추적
