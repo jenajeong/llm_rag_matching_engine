@@ -25,6 +25,7 @@ QWEN_EMBEDDING_DIM = 4096
 OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_EMBEDDING_DIM = 1536
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "").strip()
 REPORT_SUMMARY_MAX_CHARS = int(os.environ.get("REPORT_SUMMARY_MAX_CHARS", "500"))
 REPORT_MAX_TOKENS = int(os.environ.get("REPORT_MAX_TOKENS", "4096"))
 
