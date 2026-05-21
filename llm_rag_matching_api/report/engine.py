@@ -180,7 +180,7 @@ class ReportGenerator:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
-            max_tokens=REPORT_MAX_TOKENS,
+            **({"max_completion_tokens": REPORT_MAX_TOKENS} if self.model.startswith(("gpt-5", "o1", "o3")) else {"max_tokens": REPORT_MAX_TOKENS}),
         )
         log_chat_usage(component="report_generation", model=self.model, response=response)
         return (response.choices[0].message.content or "").strip()
