@@ -153,16 +153,7 @@
       margin-top: 18px;
     }
 
-    .advanced-field {
-      grid-column: 1 / -1;
-      max-width: 782px;
-      width: 100%;
-      justify-self: center;
-      margin-top: 6px;
-    }
-
     .doc-field > label,
-    .advanced-field > label,
     .query-field > label {
       position: absolute;
       width: 1px;
@@ -181,31 +172,6 @@
       font-weight: 800;
       color: #2f2f2f;
       text-align: right;
-    }
-
-    .search-range-toggle {
-      width: 100%;
-      min-height: 52px;
-      margin: 0;
-      padding: 10px 18px;
-      border: 1px solid #d9d9d9;
-      border-radius: 999px;
-      background: #ffffff;
-      color: #3a3a3a;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      font-size: 15px;
-      font-weight: 800;
-      user-select: none;
-    }
-
-    .search-range-toggle[aria-pressed="true"] {
-      border-color: var(--brand);
-      background: #eaf4ff;
-      color: var(--brand-dark);
     }
 
     .query-input {
@@ -228,7 +194,7 @@
     }
 
     .query-input:focus,
-    .search-range-toggle:focus-visible {
+    .expand-search-button:focus-visible {
       outline: 3px solid rgba(0, 91, 172, 0.16);
       border-color: var(--brand);
       background: #fff;
@@ -512,6 +478,42 @@
       gap: 24px;
     }
 
+    .expand-search {
+      margin-top: 24px;
+      padding: 24px;
+      border: 1px solid #e4e8ed;
+      border-radius: 16px;
+      background: #ffffff;
+      text-align: center;
+    }
+
+    .expand-search[hidden] {
+      display: none;
+    }
+
+    .expand-search p {
+      margin: 0 0 12px;
+      color: #42526a;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .expand-search-button {
+      min-height: 42px;
+      padding: 0 18px;
+      border: 1px solid var(--brand);
+      border-radius: 7px;
+      background: #ffffff;
+      color: var(--brand-dark);
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .expand-search-button:hover {
+      background: #eaf4ff;
+    }
+
     .professor-card {
       background: var(--surface);
       border: 0;
@@ -621,18 +623,13 @@
       }
 
       .query-field,
-      .doc-field,
-      .advanced-field {
+      .doc-field {
         grid-column: 1;
       }
 
       .doc-field {
         grid-template-columns: 1fr;
         justify-content: stretch;
-      }
-
-      .advanced-field {
-        max-width: none;
       }
 
       .doc-field::before {
@@ -742,12 +739,6 @@
           </div>
         </div>
 
-        <div class="field advanced-field">
-          <label for="searchRangeToggle">검색 범위</label>
-          <button class="search-range-toggle" id="searchRangeToggle" type="button" aria-pressed="false">
-            더 많은 교수 후보에서 검색하기
-          </button>
-        </div>
         <div class="status" id="status" role="status" aria-live="polite"></div>
       </form>
     </section>
@@ -762,6 +753,10 @@
       </div>
 
       <div id="results" class="empty">아직 검색 결과가 없습니다.</div>
+      <div class="expand-search" id="expandSearch" hidden>
+        <p>원하는 교수를 찾지 못하셨나요?</p>
+        <button class="expand-search-button" id="expandSearchButton" type="button">검색 범위를 넓혀 다시 검색</button>
+      </div>
     </section>
   </main>
 
@@ -777,7 +772,8 @@
     const queryInput = document.getElementById("query");
     const searchButton = document.getElementById("searchButton");
     const resetButton = document.getElementById("resetButton");
-    const searchRangeToggle = document.getElementById("searchRangeToggle");
+    const expandSearch = document.getElementById("expandSearch");
+    const expandSearchButton = document.getElementById("expandSearchButton");
     const reportButton = document.getElementById("reportButton");
     const statusEl = document.getElementById("status");
     const noticeOverlay = document.getElementById("noticeOverlay");
@@ -788,6 +784,7 @@
     const DEFAULT_RETRIEVAL_TOP_K = 20;
     const EXPANDED_RETRIEVAL_TOP_K = 30;
     let currentSearchId = "";
+    let expandedSearchEnabled = false;
     let noticeTimer = null;
     let cachedReport = null;
 
@@ -796,13 +793,6 @@
     }
 
     summaryEl.textContent = defaultSummary();
-
-    function setExpandedSearch(enabled) {
-      searchRangeToggle.setAttribute("aria-pressed", String(enabled));
-      searchRangeToggle.textContent = enabled
-        ? "확장 검색 사용 중 · 기본 검색 범위로 돌아가기"
-        : "더 많은 교수 후보에서 검색하기";
-    }
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -874,6 +864,7 @@
       const ranked = data?.ahp_results?.ranked_professors || [];
       currentSearchId = data.search_id || "";
       reportButton.disabled = !currentSearchId;
+      expandSearch.hidden = expandedSearchEnabled;
       summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명 중 상위 ${Math.min(ranked.length, DISPLAYED_PROFESSOR_COUNT).toLocaleString("ko-KR")}명을 표시합니다.`;
 
       if (!ranked.length) {
@@ -937,13 +928,14 @@
       const payload = {
         query,
         doc_types: docTypes,
-        retrieval_top_k: searchRangeToggle.getAttribute("aria-pressed") === "true"
+        retrieval_top_k: expandedSearchEnabled
           ? EXPANDED_RETRIEVAL_TOP_K
           : DEFAULT_RETRIEVAL_TOP_K,
       };
 
       currentSearchId = "";
       clearCachedReport();
+      expandSearch.hidden = true;
       reportButton.disabled = true;
       searchButton.disabled = true;
       showNotice("검색 중입니다. 잠시만 기다려 주세요.", { busy: true });
@@ -976,6 +968,11 @@
       }
     });
 
+    queryInput.addEventListener("input", () => {
+      expandedSearchEnabled = false;
+      expandSearch.hidden = true;
+    });
+
     queryInput.addEventListener("paste", (event) => {
       const pastedText = event.clipboardData?.getData("text") || "";
       if (!/[\r\n]/.test(pastedText)) {
@@ -992,13 +989,23 @@
       );
     });
 
-    searchRangeToggle.addEventListener("click", () => {
-      setExpandedSearch(searchRangeToggle.getAttribute("aria-pressed") !== "true");
+    expandSearchButton.addEventListener("click", () => {
+      expandedSearchEnabled = true;
+      expandSearch.hidden = true;
+      form.requestSubmit();
+    });
+
+    document.querySelectorAll('input[name="doc_types"]').forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        expandedSearchEnabled = false;
+        expandSearch.hidden = true;
+      });
     });
 
     resetButton.addEventListener("click", () => {
       form.reset();
-      setExpandedSearch(false);
+      expandedSearchEnabled = false;
+      expandSearch.hidden = true;
       currentSearchId = "";
       clearCachedReport();
       reportButton.disabled = true;
