@@ -838,7 +838,7 @@
       <div class="results-head">
         <div>
           <h1>추천 결과</h1>
-          <p class="summary" id="summary">검색어를 입력하면 관련 교수 상위 5명이 표시됩니다.</p>
+          <p class="summary" id="summary">검색어를 입력하면 관련 교수 상위 결과가 표시됩니다.</p>
         </div>
         <button class="secondary-button" id="reportButton" type="button" disabled>PDF 보고서</button>
       </div>
@@ -865,9 +865,16 @@
     const noticeMessage = document.getElementById("noticeMessage");
     const summaryEl = document.getElementById("summary");
     const resultsEl = document.getElementById("results");
+    const DISPLAYED_PROFESSOR_COUNT = 5;
     let currentSearchId = "";
     let noticeTimer = null;
     let cachedReport = null;
+
+    function defaultSummary() {
+      return `검색어를 입력하면 관련 교수 상위 ${DISPLAYED_PROFESSOR_COUNT}명이 표시됩니다.`;
+    }
+
+    summaryEl.textContent = defaultSummary();
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -939,7 +946,7 @@
       const ranked = data?.ahp_results?.ranked_professors || [];
       currentSearchId = data.search_id || "";
       reportButton.disabled = !currentSearchId;
-      summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명 중 상위 ${Math.min(ranked.length, 5).toLocaleString("ko-KR")}명을 표시합니다.`;
+      summaryEl.textContent = `"${data.query || queryInput.value}" 검색 결과 ${ranked.length.toLocaleString("ko-KR")}명 중 상위 ${Math.min(ranked.length, DISPLAYED_PROFESSOR_COUNT).toLocaleString("ko-KR")}명을 표시합니다.`;
 
       if (!ranked.length) {
         resultsEl.className = "empty";
@@ -948,7 +955,7 @@
       }
 
       resultsEl.className = "result-list";
-      resultsEl.innerHTML = ranked.slice(0, 5).map((professor) => {
+      resultsEl.innerHTML = ranked.slice(0, DISPLAYED_PROFESSOR_COUNT).map((professor) => {
         const info = professor.professor_info || {};
         const name = info.NM || info.name || "이름 없음";
         const department = [info.COLG_NM, info.HG_NM, info.WKGD_NM].filter(Boolean).join(" · ");
@@ -1045,7 +1052,7 @@
       currentSearchId = "";
       clearCachedReport();
       reportButton.disabled = true;
-      summaryEl.textContent = "검색어를 입력하면 관련 교수 상위 5명이 표시됩니다.";
+      summaryEl.textContent = defaultSummary();
       resultsEl.className = "empty";
       resultsEl.textContent = "아직 검색 결과가 없습니다.";
       setStatus("");
@@ -1071,7 +1078,10 @@
         const response = await fetch("/api/v1/report/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ search_id: currentSearchId }),
+          body: JSON.stringify({
+            search_id: currentSearchId,
+            professor_count: DISPLAYED_PROFESSOR_COUNT,
+          }),
         });
         if (!response.ok) {
           let detail = "보고서 생성에 실패했습니다.";
