@@ -183,19 +183,15 @@
       text-align: right;
     }
 
-    .advanced-details {
+    .search-range-toggle {
       width: 100%;
-    }
-
-    .advanced-details summary {
-      width: 100%;
-      min-height: 34px;
+      min-height: 52px;
       margin: 0;
-      padding: 0;
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-      color: #4f4f4f;
+      padding: 10px 18px;
+      border: 1px solid #d9d9d9;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #3a3a3a;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -203,26 +199,13 @@
       gap: 8px;
       font-size: 15px;
       font-weight: 800;
-      list-style: none;
       user-select: none;
     }
 
-    .advanced-details summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .advanced-details summary::after {
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-right: 2px solid #777777;
-      border-bottom: 2px solid #777777;
-      color: #777777;
-      transform: rotate(45deg) translateY(-2px);
-    }
-
-    .advanced-details[open] summary::after {
-      transform: rotate(225deg) translateY(-1px);
+    .search-range-toggle[aria-pressed="true"] {
+      border-color: var(--brand);
+      background: #eaf4ff;
+      color: var(--brand-dark);
     }
 
     .query-input {
@@ -245,7 +228,7 @@
     }
 
     .query-input:focus,
-    input[type="number"]:focus {
+    .search-range-toggle:focus-visible {
       outline: 3px solid rgba(0, 91, 172, 0.16);
       border-color: var(--brand);
       background: #fff;
@@ -275,56 +258,6 @@
 
     .type-options input {
       accent-color: var(--brand);
-    }
-
-    .advanced {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(160px, 1fr));
-      gap: 16px;
-      margin-top: 10px;
-      padding: 18px;
-      border-radius: 22px;
-      background: rgba(255, 255, 255, 0.78);
-      border: 1px solid #e3e3e3;
-      box-shadow: none;
-    }
-
-    .number-field {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 106px;
-      align-items: center;
-      gap: 14px;
-      min-height: 72px;
-      padding: 14px 16px;
-      border: 1px solid #ededed;
-      border-radius: 18px;
-      background: #fafafa;
-    }
-
-    .number-field span {
-      color: #333333;
-      font-size: 15px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .number-field small {
-      display: block;
-      color: #808080;
-      font-size: 12px;
-      font-weight: 500;
-      margin-top: 2px;
-    }
-
-    .advanced input {
-      width: 100%;
-      height: 45px;
-      border: 1px solid #d9d9d9;
-      border-radius: 999px;
-      padding: 0 14px;
-      background: #ffffff;
-      font-size: 15px;
-      text-align: center;
     }
 
     .primary-button,
@@ -740,12 +673,7 @@
         padding: 24px 16px;
       }
 
-      .type-options,
-      .advanced {
-        grid-template-columns: 1fr;
-      }
-
-      .number-field {
+      .type-options {
         grid-template-columns: 1fr;
       }
 
@@ -815,20 +743,10 @@
         </div>
 
         <div class="field advanced-field">
-          <label>상세 조건</label>
-          <details class="advanced-details">
-            <summary>상세 조건 열기</summary>
-            <div class="advanced">
-              <div class="number-field">
-                <span>검색 후보 수<small>많을수록 넓게 탐색</small></span>
-                <input type="number" id="retrievalTopK" min="1" max="100" value="20" aria-label="검색 후보 수">
-              </div>
-              <div class="number-field">
-                <span>유사도 기준<small>낮을수록 결과 범위 확대</small></span>
-                <input type="number" id="similarityThreshold" min="0" max="1" step="0.01" value="0.3" aria-label="유사도 기준">
-              </div>
-            </div>
-          </details>
+          <label for="searchRangeToggle">검색 범위</label>
+          <button class="search-range-toggle" id="searchRangeToggle" type="button" aria-pressed="false">
+            더 많은 교수 후보에서 검색하기
+          </button>
         </div>
         <div class="status" id="status" role="status" aria-live="polite"></div>
       </form>
@@ -859,6 +777,7 @@
     const queryInput = document.getElementById("query");
     const searchButton = document.getElementById("searchButton");
     const resetButton = document.getElementById("resetButton");
+    const searchRangeToggle = document.getElementById("searchRangeToggle");
     const reportButton = document.getElementById("reportButton");
     const statusEl = document.getElementById("status");
     const noticeOverlay = document.getElementById("noticeOverlay");
@@ -866,6 +785,8 @@
     const summaryEl = document.getElementById("summary");
     const resultsEl = document.getElementById("results");
     const DISPLAYED_PROFESSOR_COUNT = 5;
+    const DEFAULT_RETRIEVAL_TOP_K = 20;
+    const EXPANDED_RETRIEVAL_TOP_K = 30;
     let currentSearchId = "";
     let noticeTimer = null;
     let cachedReport = null;
@@ -875,6 +796,13 @@
     }
 
     summaryEl.textContent = defaultSummary();
+
+    function setExpandedSearch(enabled) {
+      searchRangeToggle.setAttribute("aria-pressed", String(enabled));
+      searchRangeToggle.textContent = enabled
+        ? "확장 검색 사용 중 · 기본 검색 범위로 돌아가기"
+        : "더 많은 교수 후보에서 검색하기";
+    }
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -1009,8 +937,9 @@
       const payload = {
         query,
         doc_types: docTypes,
-        retrieval_top_k: Number(document.getElementById("retrievalTopK").value || 20),
-        similarity_threshold: Number(document.getElementById("similarityThreshold").value || 0.3),
+        retrieval_top_k: searchRangeToggle.getAttribute("aria-pressed") === "true"
+          ? EXPANDED_RETRIEVAL_TOP_K
+          : DEFAULT_RETRIEVAL_TOP_K,
       };
 
       currentSearchId = "";
@@ -1063,8 +992,13 @@
       );
     });
 
+    searchRangeToggle.addEventListener("click", () => {
+      setExpandedSearch(searchRangeToggle.getAttribute("aria-pressed") !== "true");
+    });
+
     resetButton.addEventListener("click", () => {
       form.reset();
+      setExpandedSearch(false);
       currentSearchId = "";
       clearCachedReport();
       reportButton.disabled = true;
