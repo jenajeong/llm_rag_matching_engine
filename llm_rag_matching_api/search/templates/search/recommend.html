@@ -799,7 +799,7 @@
       <form id="searchForm">
         <div class="field query-field">
           <label for="query">검색어</label>
-          <textarea class="query-input" id="query" name="query" placeholder="검색어 입력" required></textarea>
+          <input class="query-input" id="query" name="query" type="text" placeholder="검색어 입력" required>
         </div>
 
         <button class="primary-button" id="searchButton" type="submit">검색</button>
@@ -1045,6 +1045,22 @@
         event.preventDefault();
         form.requestSubmit();
       }
+    });
+
+    queryInput.addEventListener("paste", (event) => {
+      const pastedText = event.clipboardData?.getData("text") || "";
+      if (!/[\r\n]/.test(pastedText)) {
+        return;
+      }
+
+      event.preventDefault();
+      const sanitizedText = pastedText.replace(/\s*[\r\n]+\s*/g, " ");
+      queryInput.setRangeText(
+        sanitizedText,
+        queryInput.selectionStart,
+        queryInput.selectionEnd,
+        "end",
+      );
     });
 
     resetButton.addEventListener("click", () => {
