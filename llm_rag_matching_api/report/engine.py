@@ -63,7 +63,10 @@ class ReportGenerator:
             raise ReportGenerationError("ahp_results is required. Pass the full recommendation response or ahp_results/rag_results.")
 
         timestamp = ahp_results.get("timestamp") or datetime.now().strftime("%Y%m%d_%H%M%S")
-        input_data = self._prepare_input_json(ahp_results)
+        input_data = self._prepare_input_json(
+            ahp_results,
+            professor_count=payload.get("professor_count"),
+        )
         report_text = self._generate_report_text(input_data)
         report_html = markdown_to_html(report_text)
         pdf_path = self.save_pdf(report_html, timestamp=timestamp)
@@ -99,12 +102,28 @@ class ReportGenerator:
             return recommend_professors(payload)
         raise ReportGenerationError("Pass search_id, the first endpoint response, or provide query to run recommendation first.")
 
-    def _prepare_input_json(self, ahp_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_input_json(
+        self,
+        ahp_results: Dict[str, Any],
+        professor_count: Optional[int] = None,
+    ) -> Dict[str, Any]:
         query = ahp_results.get("query", "")
         keywords = normalize_keywords_if_duplicate_query(ahp_results.get("keywords", {}), query)
         professors = []
+        ranked_professors = ahp_results.get("ranked_professors", [])
 
-        for index, professor in enumerate(ahp_results.get("ranked_professors", [])[:3], 1):
+        if professor_count is not None:
+            if isinstance(professor_count, bool):
+                raise ReportGenerationError("professor_count must be a positive integer.")
+            try:
+                professor_count = int(professor_count)
+            except (TypeError, ValueError) as error:
+                raise ReportGenerationError("professor_count must be a positive integer.") from error
+            if professor_count <= 0:
+                raise ReportGenerationError("professor_count must be a positive integer.")
+            ranked_professors = ranked_professors[:professor_count]
+
+        for index, professor in enumerate(ranked_professors, 1):
             info = professor.get("professor_info") or {}
             documents = professor.get("documents") or {}
             document_scores = professor.get("document_scores") or {}
@@ -199,7 +218,7 @@ def build_report_prompt(input_data: Dict[str, Any]) -> str:
 작성 규칙:
 - 한국어로 작성한다.
 - AHP 점수, 총점, 내부 계산값은 표시하지 않는다.
-- 교수는 input JSON의 professors 배열 순서대로 1, 2, 3번만 표시한다.
+- 교수는 input JSON의 professors 배열 순서대로 모든 교수를 표시한다.
 - 각 교수 블록에는 소속, 이메일, 사용자가 검색한 내용과 관련 있는 문서 근거를 포함한다.
 - 문서 유형은 [논문], [특허], [연구 과제] 순서로 묶는다.
 - 없는 문서 유형은 출력하지 않는다.
