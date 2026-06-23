@@ -17,12 +17,12 @@ def run():
         page = context.new_page()
 
         # -----------------------------
-        # 1. 메인 접속
+        # 1. 硫붿씤 ?묒냽
         # -----------------------------
         page.goto("https://plus.kipris.or.kr/portal/main.do")
 
         # -----------------------------
-        # 2. 로그인
+        # 2. 濡쒓렇??
         # -----------------------------
         page.click("text=로그인")
         page.fill("#mId", ID)
@@ -30,10 +30,10 @@ def run():
         page.click(".submit-login")
 
         page.wait_for_timeout(3000)
-        print("로그인 완료")
+        print("濡쒓렇???꾨즺")
 
         # -----------------------------
-        # 3. 메뉴 이동 (hover)
+        # 3. 硫붾돱 ?대룞 (hover)
         # -----------------------------
         page.goto(
             "https://plus.kipris.or.kr/portal/data/request/apiFsmtmList.do?menuNo=290005",
@@ -41,36 +41,45 @@ def run():
         )
 
         page.wait_for_timeout(5000)
-        print("Open API 페이지 진입")
+        print("Open API ?섏씠吏 吏꾩엯")
+
+       # dialog ?먮룞 泥섎━ ?깅줉
+        def handle_dialog(dialog):
+            print("?뚮┝李??댁슜:", dialog.message)
+            dialog.accept()
+
+        page.on("dialog", handle_dialog)
 
         # -----------------------------
-        # 4. API 선택 (체크박스)
+        # 4. API ?좏깮 泥댄겕諛뺤뒪 ?대┃
         # -----------------------------
-        page.locator(".checkBox").nth(1).click()
+        checkbox = page.locator("div.checkBox").nth(1)
+        checkbox.wait_for(state="visible", timeout=5000)
+        checkbox.click(force=True)
+
+        page.wait_for_timeout(500)
 
         # -----------------------------
-        # 5. 장바구니 (confirm 처리 포함)
+        # 5. ?λ컮援щ땲 ?대┃
         # -----------------------------
-        page.on("dialog", lambda dialog: dialog.accept())
-        page.click("text=장바구니")
+        page.locator('a[href="javascript:cart();"]').click(force=True)
 
         page.wait_for_timeout(2000)
-
         # -----------------------------
-        # 6. 장바구니 페이지 이동
+        # 6. ?λ컮援щ땲 ?섏씠吏 ?대룞
         # -----------------------------
         page.click("a[href*='cartList.do']")
         page.wait_for_timeout(5000)
-        print("장바구니 페이지 진입")
+        print("?λ컮援щ땲 ?섏씠吏 吏꾩엯")
 
         # -----------------------------
-        # 7. 무료 선택
+        # 7. 臾대즺 ?좏깮
         # -----------------------------
         page.select_option("#motnTgtTpcd", value="KP242")
         page.wait_for_timeout(1000)
 
         # -----------------------------
-        # 8. 이용기간 설정 (현재년도 12/31)
+        # 8. ?댁슜湲곌컙 ?ㅼ젙 (?꾩옱?꾨룄 12/31)
         # -----------------------------
         year = datetime.now().year
         end_date = f"{year}1231"
@@ -83,33 +92,33 @@ def run():
         page.wait_for_timeout(1000)
 
         # -----------------------------
-        # 9. API 체크
+        # 9. API 泥댄겕
         # -----------------------------
         checkbox = page.locator("input[name='checkBox_API']").first
         if not checkbox.is_checked():
             checkbox.check()
 
         # -----------------------------
-        # 10. 서비스명 입력
+        # 10. ?쒕퉬?ㅻ챸 ?낅젰
         # -----------------------------
         page.fill("#utilSvcNm", "해당없음")
 
         # -----------------------------
-        # 11. 약관 동의
+        # 11. ?쎄? ?숈쓽
         # -----------------------------
         agree = page.locator("#require")
         if not agree.is_checked():
             agree.check()
 
         # -----------------------------
-        # 12. 신청하기 (dialog 처리 포함)
+        # 12. ?좎껌?섍린 (dialog 泥섎━ ?ы븿)
         # -----------------------------
         page.on("dialog", lambda dialog: dialog.accept())
         page.click(".shopRequest")
 
         page.wait_for_timeout(5000)
 
-        print("API 신청 자동화 완료")
+        print("API ?좎껌 ?먮룞???꾨즺")
 
         input("확인 후 종료")
         browser.close()
