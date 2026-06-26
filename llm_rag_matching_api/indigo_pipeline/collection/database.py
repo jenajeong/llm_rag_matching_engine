@@ -105,6 +105,8 @@ class IndigoApiClient:
     def fetch_page(self, cat: str, page: int = 1) -> Dict[str, Any]:
         if cat not in VALID_CATS:
             raise ValueError(f"Invalid Indigo API cat: {cat}")
+        if not self.key:
+            raise RuntimeError("INDIGO_API_KEY is required to call the Indigo API.")
 
         response = requests.post(
             self.url,
