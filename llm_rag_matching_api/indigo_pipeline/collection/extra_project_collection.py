@@ -9,7 +9,13 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR.parent))
 
-from indigo_pipeline.collection.database import get_db_connection, close_db_connection
+from indigo_pipeline.collection.database import (
+    CAT_EMPLOYEE,
+    CAT_PROJECT,
+    get_api_dataframe,
+    get_db_connection,
+    close_db_connection,
+)
 from indigo_pipeline.config import PROJECT_DATA_FILE
 
 PROJECT_PATH = Path(PROJECT_DATA_FILE)
@@ -41,7 +47,7 @@ def get_existing_ids(data):
 # 교수 map
 # =========================
 def get_professor_map(conn):
-    df = pd.read_sql("SELECT * FROM v_emp1", conn)
+    df = get_api_dataframe(CAT_EMPLOYEE, conn)
 
     prof_map = {}
 
@@ -102,7 +108,7 @@ def main():
         conn = get_db_connection()
 
         print("📌 프로젝트 전체 조회")
-        df = pd.read_sql("SELECT * FROM vw_inu_prj_info", conn)
+        df = get_api_dataframe(CAT_PROJECT, conn)
         print(f"DB 개수: {len(df)}")
 
         print("📌 교수 매핑 로딩")
