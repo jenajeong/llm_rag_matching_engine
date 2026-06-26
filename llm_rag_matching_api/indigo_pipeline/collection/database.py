@@ -1,50 +1,55 @@
 """
-데이터베이스 연결 설정
-MariaDB 접속 정보 및 연결 함수를 제공합니다.
+Indigo collection data access.
+
+The pipeline used to read directly from MariaDB. Indigo now exposes the same
+source tables through a paginated POST API, so this module keeps the old helper
+function names while fetching data from the API.
 """
 
-import mariadb
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
-from typing import Optional, List, Dict
+import requests
 
 from indigo_pipeline.config import (
-    INDIGO_DB_AUTOCOMMIT,
-    INDIGO_DB_CONNECT_TIMEOUT,
-    INDIGO_DB_HOST,
-    INDIGO_DB_NAME,
-    INDIGO_DB_PASSWORD,
-    INDIGO_DB_PORT,
-    INDIGO_DB_SSL,
-    INDIGO_DB_USER,
+    INDIGO_API_KEY,
+    INDIGO_API_TIMEOUT,
+    INDIGO_API_URL,
 )
 
 
-# MariaDB 접속 정보
-DB_CONFIG = {
-    "HOST": INDIGO_DB_HOST,
-    "PORT": INDIGO_DB_PORT,
-    "USER": INDIGO_DB_USER,
-    "PASSWORD": INDIGO_DB_PASSWORD,
-    "DATABASE": INDIGO_DB_NAME,
-    "CONNECT_TIMEOUT": INDIGO_DB_CONNECT_TIMEOUT,
-    "AUTOCOMMIT": INDIGO_DB_AUTOCOMMIT,
-    "SSL": INDIGO_DB_SSL,
-}
-
-# 테이블명 정의
 TABLE_PATENT = "tb_inu_tech"
 TABLE_EMPLOYEE = "v_emp1"
 TABLE_ARTICLE = "v_emp1_3"
 TABLE_PROJECT = "vw_inu_prj_info"
 TABLE_INVENTOR = "tb_inu_tech_invntr_v2026_0115"
 
-# 특허 테이블 컬럼명
+CAT_EMPLOYEE = "emp1"
+CAT_ARTICLE = "emp1_3"
+CAT_PATENT = "inu_tech"
+CAT_INVENTOR = "inu_tech_invntr"
+CAT_PROJECT = "inu_prj_info"
+
+CAT_BY_TABLE = {
+    TABLE_EMPLOYEE: CAT_EMPLOYEE,
+    TABLE_ARTICLE: CAT_ARTICLE,
+    TABLE_PATENT: CAT_PATENT,
+    TABLE_INVENTOR: CAT_INVENTOR,
+    TABLE_PROJECT: CAT_PROJECT,
+}
+
+VALID_CATS = {CAT_EMPLOYEE, CAT_ARTICLE, CAT_PATENT, CAT_INVENTOR, CAT_PROJECT}
+
+# Patent columns
 COL_PATENT_APP_ID = "tech_aplct_id"
 COL_PATENT_MBR_SN = "mbr_sn"
 COL_PATENT_PROJECT_NAME = "tech_nm"
 COL_PATENT_REGISTER_ID = "ptnt_rgstr_id"
 
-# 교수 테이블 컬럼명
+# Professor columns
 COL_EMP_SQ = "SQ"
 COL_EMP_NO = "EMP_NO"
 COL_EMP_NM = "NM"
@@ -60,534 +65,370 @@ COL_EMP_HANDP_NO = "HANDP_NO"
 COL_EMP_OFCE_TELNO = "OFCE_TELNO"
 COL_EMP_EMAIL = "EMAIL"
 
-# 논문 테이블 컬럼명
+EMPLOYEE_COLUMNS = [
+    COL_EMP_SQ,
+    COL_EMP_NO,
+    COL_EMP_NM,
+    COL_EMP_GEN_GBN,
+    COL_EMP_BIRTH_DT,
+    COL_EMP_NAT_GBN,
+    COL_EMP_RECHER_REG_NO,
+    COL_EMP_WKGD_NM,
+    COL_EMP_COLG_NM,
+    COL_EMP_HG_NM,
+    COL_EMP_HOOF_GBN,
+    COL_EMP_HANDP_NO,
+    COL_EMP_OFCE_TELNO,
+    COL_EMP_EMAIL,
+]
+
+# Article columns
 COL_ARTICLE_EMP_NO = "EMP_NO"
 COL_ARTICLE_THSS_NM = "THSS_NM"
 COL_ARTICLE_PUBLSH_DT = "PUBLSH_DT"
 
-# 연구과제 테이블 컬럼명
+# Project columns
 COL_PROJECT_PRJ_NM = "PRJ_NM"
 COL_PROJECT_RSPR_EMP_ID = "PRJ_RSPR_EMP_ID"
 
-# 작업 대상 테이블 (하위 호환성)
 TARGET_TABLE = TABLE_PATENT
 TARGET_ID_COLUMN = COL_PATENT_APP_ID
 
 
-def get_db_connection() -> mariadb.Connection:
-    """
-    MariaDB 데이터베이스 연결을 생성하고 반환합니다.
-    
-    Returns:
-        mariadb.Connection: 데이터베이스 연결 객체
-        
-    Raises:
-        mariadb.Error: 데이터베이스 연결 실패 시
-    """
-    try:
-        conn = mariadb.connect(
-            user=DB_CONFIG["USER"],
-            password=DB_CONFIG["PASSWORD"],
-            host=DB_CONFIG["HOST"],
-            port=DB_CONFIG["PORT"],
-            database=DB_CONFIG["DATABASE"],
-            connect_timeout=DB_CONFIG["CONNECT_TIMEOUT"],
-            autocommit=DB_CONFIG["AUTOCOMMIT"],
-            ssl=DB_CONFIG["SSL"]
+@dataclass
+class IndigoApiClient:
+    url: str = INDIGO_API_URL
+    key: str = INDIGO_API_KEY
+    timeout: int = INDIGO_API_TIMEOUT
+    _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
+    def fetch_page(self, cat: str, page: int = 1) -> Dict[str, Any]:
+        if cat not in VALID_CATS:
+            raise ValueError(f"Invalid Indigo API cat: {cat}")
+
+        response = requests.post(
+            self.url,
+            data={"key": self.key, "cat": cat, "page": page or 1},
+            timeout=self.timeout,
         )
-        print("MariaDB 연결 성공!")
-        return conn
-    except mariadb.Error as e:
-        print("MariaDB 연결 실패!")
-        print("오류 코드:", e.errno)
-        print("오류 메시지:", e.msg)
-        raise
+        response.raise_for_status()
+        payload = response.json()
+
+        status = payload.get("status")
+        if str(status).lower() not in {"1", "true", "success", "s", "y", "ok"}:
+            raise RuntimeError(f"Indigo API failed for cat={cat}, page={page}: {payload}")
+
+        return payload
+
+    def fetch_all(self, cat: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        if cat in self._cache:
+            rows = self._cache[cat]
+            return rows[:limit] if limit else rows
+
+        all_rows: List[Dict[str, Any]] = []
+        page = 1
+
+        while True:
+            payload = self.fetch_page(cat, page)
+            data = payload.get("data") or {}
+            datas = data.get("datas") or []
+            if isinstance(datas, dict):
+                datas = [datas]
+
+            all_rows.extend([_with_column_aliases(row) for row in datas if isinstance(row, dict)])
+
+            record = _to_int(data.get("record"))
+            rows_per_page = _to_int(data.get("rows")) or len(datas) or 100
+
+            if limit and len(all_rows) >= limit:
+                break
+            if not datas:
+                break
+            if record and len(all_rows) >= record:
+                break
+            if len(datas) < rows_per_page:
+                break
+
+            page += 1
+
+        self._cache[cat] = all_rows
+        return all_rows[:limit] if limit else all_rows
+
+    def close(self) -> None:
+        self._cache.clear()
 
 
-def close_db_connection(conn: Optional[mariadb.Connection]):
-    """
-    데이터베이스 연결을 안전하게 종료합니다.
-    
-    Args:
-        conn: 종료할 연결 객체
-    """
+def get_db_connection() -> IndigoApiClient:
+    print("Indigo API client ready.")
+    return IndigoApiClient()
+
+
+def close_db_connection(conn: Optional[IndigoApiClient]):
     if conn:
-        try:
-            conn.close()
-            print("연결 종료 완료.")
-        except Exception as e:
-            print(f"연결 종료 중 오류: {e}")
+        conn.close()
+        print("Indigo API client closed.")
 
 
 def test_connection():
-    """데이터베이스 연결을 테스트합니다."""
     conn = None
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        result = cursor.fetchone()
-        print(f"연결 테스트 성공: {result}")
+        payload = conn.fetch_page(CAT_EMPLOYEE, page=1)
+        count = len((payload.get("data") or {}).get("datas") or [])
+        print(f"Indigo API connection test succeeded: {count} rows on page 1")
     except Exception as e:
-        print(f"연결 테스트 실패: {e}")
+        print(f"Indigo API connection test failed: {e}")
     finally:
         close_db_connection(conn)
 
 
-def get_article_data(conn: mariadb.Connection, min_year: int = 2015) -> pd.DataFrame:
-    """
-    논문 데이터를 조회합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        min_year: 최소 게재 연도 (기본값: 2015)
-        
-    Returns:
-        논문 데이터 DataFrame (EMP_NO, THSS_NM, PUBLSH_DT)
-    """
-    query = f"""
-        SELECT
-            {COL_ARTICLE_EMP_NO},
-            {COL_ARTICLE_THSS_NM},
-            {COL_ARTICLE_PUBLSH_DT}
-        FROM {TABLE_ARTICLE}
-        WHERE {COL_ARTICLE_EMP_NO} IS NOT NULL
-          AND {COL_ARTICLE_THSS_NM} IS NOT NULL
-          AND {COL_ARTICLE_PUBLSH_DT} IS NOT NULL
-    """
-    df = pd.read_sql(query, conn)
-    
-    # 전처리
+def get_api_rows(cat_or_table: str, conn: Optional[IndigoApiClient] = None, limit: Optional[int] = None) -> List[Dict]:
+    cat = CAT_BY_TABLE.get(cat_or_table, cat_or_table)
+    client = conn or get_db_connection()
+    try:
+        return client.fetch_all(cat, limit=limit)
+    finally:
+        if conn is None:
+            close_db_connection(client)
+
+
+def get_api_dataframe(cat_or_table: str, conn: Optional[IndigoApiClient] = None, limit: Optional[int] = None) -> pd.DataFrame:
+    return pd.DataFrame(get_api_rows(cat_or_table, conn=conn, limit=limit))
+
+
+def get_article_data(conn: IndigoApiClient, min_year: int = 2015) -> pd.DataFrame:
+    df = get_api_dataframe(CAT_ARTICLE, conn)
+    _ensure_columns(df, [COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM, COL_ARTICLE_PUBLSH_DT])
+
+    df = df[
+        df[COL_ARTICLE_EMP_NO].notna()
+        & df[COL_ARTICLE_THSS_NM].notna()
+        & df[COL_ARTICLE_PUBLSH_DT].notna()
+    ].copy()
     df[COL_ARTICLE_EMP_NO] = df[COL_ARTICLE_EMP_NO].astype(str).str.strip()
     df[COL_ARTICLE_THSS_NM] = df[COL_ARTICLE_THSS_NM].astype(str).str.strip()
     df[COL_ARTICLE_PUBLSH_DT] = pd.to_datetime(df[COL_ARTICLE_PUBLSH_DT], errors="coerce")
-    
-    # 연도 필터링
+
     if min_year:
         df = df[df[COL_ARTICLE_PUBLSH_DT].dt.year >= min_year]
-    
-    # 중복 제거
+
     df = df.drop_duplicates(subset=[COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM]).reset_index(drop=True)
-    
-    # 게재일자 순 정렬 (최신순)
     df = df.sort_values(COL_ARTICLE_PUBLSH_DT, ascending=False).reset_index(drop=True)
-    
     return df
 
 
-def get_patent_statistics(conn: mariadb.Connection) -> Dict[str, int]:
-    """
-    특허 데이터 통계 정보를 조회합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        
-    Returns:
-        통계 정보 딕셔너리
-    """
-    stats = {}
-    
-    # 1. 특허 테이블 전체 데이터 개수
-    query_total = f"SELECT COUNT(*) as total_count FROM {TABLE_PATENT}"
-    df_total = pd.read_sql(query_total, conn)
-    stats['total_records'] = int(df_total.iloc[0]['total_count'])
-    
-    # 2. 등록번호(ptnt_rgstr_id)가 있는 데이터 개수
-    query_with_register_id = f"""
-        SELECT COUNT(*) as count_with_register_id
-        FROM {TABLE_PATENT}
-        WHERE {COL_PATENT_REGISTER_ID} IS NOT NULL 
-            AND {COL_PATENT_REGISTER_ID} != ''
-    """
-    df_with_register_id = pd.read_sql(query_with_register_id, conn)
-    stats['records_with_register_id'] = int(df_with_register_id.iloc[0]['count_with_register_id'])
-    
-    # 3. 교수 사번 매칭된 데이터 개수 (발명자 테이블을 통한 매핑)
-    query_matched = f"""
-        SELECT COUNT(DISTINCT t.{COL_PATENT_REGISTER_ID}) as matched_count
-        FROM {TABLE_PATENT} t
-        INNER JOIN {TABLE_INVENTOR} inv 
-            ON CAST(t.{COL_PATENT_MBR_SN} AS CHAR) = CAST(inv.mbr_sn AS CHAR)
-        INNER JOIN {TABLE_EMPLOYEE} e 
-            ON CAST(inv.invntr_nm AS CHAR) COLLATE utf8mb4_unicode_ci = CAST(e.{COL_EMP_NM} AS CHAR) COLLATE utf8mb4_unicode_ci
-            AND CAST(inv.invntr_co_nm AS CHAR) COLLATE utf8mb4_unicode_ci = CAST(e.{COL_EMP_HG_NM} AS CHAR) COLLATE utf8mb4_unicode_ci
-        WHERE t.{COL_PATENT_REGISTER_ID} IS NOT NULL 
-            AND t.{COL_PATENT_REGISTER_ID} != ''
-            AND inv.mbr_sn != 0
-            AND inv.mbr_sn IS NOT NULL
-            AND inv.invntr_se = 'A00'
-    """
-    df_matched = pd.read_sql(query_matched, conn)
-    stats['records_matched_with_professor'] = int(df_matched.iloc[0]['matched_count'])
-    
-    return stats
+def get_patent_statistics(conn: IndigoApiClient) -> Dict[str, int]:
+    patent_df = get_api_dataframe(CAT_PATENT, conn)
+    matched_df = _patent_professor_join(conn)
+
+    total_records = len(patent_df)
+    with_register = _non_empty_mask(patent_df, COL_PATENT_REGISTER_ID).sum()
+
+    return {
+        "total_records": int(total_records),
+        "records_with_register_id": int(with_register),
+        "records_matched_with_professor": int(matched_df[COL_PATENT_REGISTER_ID].dropna().nunique())
+        if COL_PATENT_REGISTER_ID in matched_df
+        else 0,
+    }
 
 
-def get_patent_application_ids(conn: mariadb.Connection, limit: Optional[int] = None) -> List[Dict]:
-    """
-    특허 출원번호와 교수 정보를 조회합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        limit: 가져올 최대 개수 (None이면 전체)
-        
-    Returns:
-        [{"tech_aplct_id": "...", "mbr_sn": "...", "professor_info": {...}}, ...] 형태의 리스트
-    """
-    query = f"""
-        SELECT DISTINCT 
-            t.{COL_PATENT_APP_ID}, 
-            t.{COL_PATENT_MBR_SN},
-            e.{COL_EMP_SQ},
-            e.{COL_EMP_NO},
-            e.{COL_EMP_NM},
-            e.{COL_EMP_GEN_GBN},
-            e.{COL_EMP_BIRTH_DT},
-            e.{COL_EMP_NAT_GBN},
-            e.{COL_EMP_RECHER_REG_NO},
-            e.{COL_EMP_WKGD_NM},
-            e.{COL_EMP_COLG_NM},
-            e.{COL_EMP_HG_NM},
-            e.{COL_EMP_HOOF_GBN},
-            e.{COL_EMP_HANDP_NO},
-            e.{COL_EMP_OFCE_TELNO},
-            e.{COL_EMP_EMAIL}
-        FROM {TABLE_PATENT} t
-        INNER JOIN {TABLE_EMPLOYEE} e ON CAST(t.{COL_PATENT_MBR_SN} AS CHAR) = CAST(e.{COL_EMP_SQ} AS CHAR)
-        WHERE t.{COL_PATENT_APP_ID} IS NOT NULL 
-            AND t.{COL_PATENT_APP_ID} != ''
-            AND t.{COL_PATENT_MBR_SN} IS NOT NULL
-            AND t.{COL_PATENT_MBR_SN} != ''
-    """
+def get_patent_application_ids(conn: IndigoApiClient, limit: Optional[int] = None) -> List[Dict]:
+    patent_df = get_api_dataframe(CAT_PATENT, conn)
+    emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
+    _ensure_columns(patent_df, [COL_PATENT_APP_ID, COL_PATENT_MBR_SN])
+    _ensure_columns(emp_df, EMPLOYEE_COLUMNS)
+
+    df = patent_df[
+        _non_empty_mask(patent_df, COL_PATENT_APP_ID) & _non_empty_mask(patent_df, COL_PATENT_MBR_SN)
+    ].copy()
+    df["_mbr_sn_key"] = df[COL_PATENT_MBR_SN].map(_key)
+    emp_df = emp_df.copy()
+    emp_df["_sq_key"] = emp_df[COL_EMP_SQ].map(_key)
+    df = df.merge(emp_df[EMPLOYEE_COLUMNS + ["_sq_key"]], left_on="_mbr_sn_key", right_on="_sq_key", how="inner")
     if limit:
-        query += f" LIMIT {limit}"
-    query += ";"
-    
-    df = pd.read_sql(query, conn)
-    
-    # 딕셔너리 리스트로 변환
-    application_list = []
+        df = df.head(limit)
+
+    result = []
     for _, row in df.iterrows():
-        if pd.notna(row[COL_PATENT_APP_ID]):
-            # 교수 정보 추출
-            professor_info = {
-                "SQ": str(row[COL_EMP_SQ]) if pd.notna(row[COL_EMP_SQ]) else "",
-                "EMP_NO": str(row[COL_EMP_NO]) if pd.notna(row[COL_EMP_NO]) else "",
-                "NM": str(row[COL_EMP_NM]) if pd.notna(row[COL_EMP_NM]) else "",
-                "GEN_GBN": str(row[COL_EMP_GEN_GBN]) if pd.notna(row[COL_EMP_GEN_GBN]) else "",
-                "BIRTH_DT": str(row[COL_EMP_BIRTH_DT]) if pd.notna(row[COL_EMP_BIRTH_DT]) else "",
-                "NAT_GBN": str(row[COL_EMP_NAT_GBN]) if pd.notna(row[COL_EMP_NAT_GBN]) else "",
-                "RECHER_REG_NO": str(row[COL_EMP_RECHER_REG_NO]) if pd.notna(row[COL_EMP_RECHER_REG_NO]) else "",
-                "WKGD_NM": str(row[COL_EMP_WKGD_NM]) if pd.notna(row[COL_EMP_WKGD_NM]) else "",
-                "COLG_NM": str(row[COL_EMP_COLG_NM]) if pd.notna(row[COL_EMP_COLG_NM]) else "",
-                "HG_NM": str(row[COL_EMP_HG_NM]) if pd.notna(row[COL_EMP_HG_NM]) else "",
-                "HOOF_GBN": str(row[COL_EMP_HOOF_GBN]) if pd.notna(row[COL_EMP_HOOF_GBN]) else "",
-                "HANDP_NO": str(row[COL_EMP_HANDP_NO]) if pd.notna(row[COL_EMP_HANDP_NO]) else "",
-                "OFCE_TELNO": str(row[COL_EMP_OFCE_TELNO]) if pd.notna(row[COL_EMP_OFCE_TELNO]) else "",
-                "EMAIL": str(row[COL_EMP_EMAIL]) if pd.notna(row[COL_EMP_EMAIL]) else "",
+        result.append(
+            {
+                "tech_aplct_id": _str_value(row.get(COL_PATENT_APP_ID)),
+                "mbr_sn": _str_value(row.get(COL_PATENT_MBR_SN)),
+                "professor_info": _professor_info(row),
             }
-            
-            application_list.append({
-                "tech_aplct_id": str(row[COL_PATENT_APP_ID]),
-                "mbr_sn": str(row[COL_PATENT_MBR_SN]) if pd.notna(row[COL_PATENT_MBR_SN]) else "",
-                "professor_info": professor_info
-            })
-    
-    return application_list
+        )
+    return result
 
 
-def get_patent_register_ids(conn: mariadb.Connection, limit: Optional[int] = None, verbose: bool = False) -> List[Dict]:
-    """
-    특허 등록번호(ptnt_rgstr_id)와 교수 정보를 조회합니다.
-    발명자 테이블을 통한 매핑 방식을 사용합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        limit: 가져올 최대 개수 (None이면 전체)
-        verbose: 쿼리 정보를 출력할지 여부
-        
-    Returns:
-        [{"ptnt_rgstr_id": "...", "ptnt_rgstr_id_clean": "...", "tech_nm": "...", "mbr_sn": "...", "professor_info": {...}}, ...] 형태의 리스트
-    """
-    query = f"""
-        SELECT DISTINCT 
-            t.{COL_PATENT_REGISTER_ID}, 
-            t.{COL_PATENT_PROJECT_NAME},
-            t.{COL_PATENT_MBR_SN},
-            inv.invntr_nm,
-            inv.invntr_co_nm,
-            e.{COL_EMP_SQ},
-            e.{COL_EMP_NO},
-            e.{COL_EMP_NM},
-            e.{COL_EMP_GEN_GBN},
-            e.{COL_EMP_BIRTH_DT},
-            e.{COL_EMP_NAT_GBN},
-            e.{COL_EMP_RECHER_REG_NO},
-            e.{COL_EMP_WKGD_NM},
-            e.{COL_EMP_COLG_NM},
-            e.{COL_EMP_HG_NM},
-            e.{COL_EMP_HOOF_GBN},
-            e.{COL_EMP_HANDP_NO},
-            e.{COL_EMP_OFCE_TELNO},
-            e.{COL_EMP_EMAIL}
-        FROM {TABLE_PATENT} t
-        INNER JOIN {TABLE_INVENTOR} inv 
-            ON CAST(t.{COL_PATENT_MBR_SN} AS CHAR) = CAST(inv.mbr_sn AS CHAR)
-        INNER JOIN {TABLE_EMPLOYEE} e 
-            ON CAST(inv.invntr_nm AS CHAR) COLLATE utf8mb4_unicode_ci = CAST(e.{COL_EMP_NM} AS CHAR) COLLATE utf8mb4_unicode_ci
-            AND CAST(inv.invntr_co_nm AS CHAR) COLLATE utf8mb4_unicode_ci = CAST(e.{COL_EMP_HG_NM} AS CHAR) COLLATE utf8mb4_unicode_ci
-        WHERE t.{COL_PATENT_REGISTER_ID} IS NOT NULL 
-            AND t.{COL_PATENT_REGISTER_ID} != ''
-            AND inv.mbr_sn != 0
-            AND inv.mbr_sn IS NOT NULL
-            AND inv.invntr_se = 'A00'
-    """
+def get_patent_register_ids(conn: IndigoApiClient, limit: Optional[int] = None, verbose: bool = False) -> List[Dict]:
+    df = _patent_professor_join(conn)
     if limit:
-        query += f" LIMIT {limit}"
-    query += ";"
-    
+        df = df.head(limit)
+
     if verbose:
-        print(f"[실행 쿼리]")
-        print(query)
-        print(f"[쿼리 설명]")
-        print(f"  - 테이블: {TABLE_PATENT} (별칭: t) INNER JOIN {TABLE_INVENTOR} (별칭: inv) INNER JOIN {TABLE_EMPLOYEE} (별칭: e)")
-        print(f"  - 조인 조건 1: t.{COL_PATENT_MBR_SN} = inv.mbr_sn")
-        print(f"  - 조인 조건 2: inv.invntr_nm = e.{COL_EMP_NM} AND inv.invntr_co_nm = e.{COL_EMP_HG_NM}")
-        print(f"  - 필터 조건:")
-        print(f"    * t.{COL_PATENT_REGISTER_ID} IS NOT NULL AND != ''")
-        print(f"    * inv.mbr_sn != 0 AND IS NOT NULL")
-        print(f"    * inv.invntr_se = 'A00'")
-        print(f"  - 조회 컬럼: 특허 등록번호, 특허명(tech_nm), 발명자 정보, 교수 정보 (SQ, EMP_NO, NM, 등)")
-        if limit:
-            print(f"  - 제한: LIMIT {limit}")
-        else:
-            print(f"  - 제한: 없음 (전체 조회)")
-    
-    df = pd.read_sql(query, conn)
-    
-    # 딕셔너리 리스트로 변환
-    register_id_list = []
+        print("[Indigo API]")
+        print(f"  - cat={CAT_PATENT}, cat={CAT_INVENTOR}, cat={CAT_EMPLOYEE}")
+        print("  - join: patent.mbr_sn = inventor.mbr_sn, inventor name/dept = professor name/dept")
+        print("  - filter: ptnt_rgstr_id present, inventor.mbr_sn present/non-zero, invntr_se = A00")
+        print(f"  - rows: {len(df):,}")
+
+    result = []
     for _, row in df.iterrows():
-        if pd.notna(row[COL_PATENT_REGISTER_ID]):
-            # 등록번호에서 - 제거
-            register_id = str(row[COL_PATENT_REGISTER_ID]).strip()
-            register_id_clean = register_id.replace("-", "")
-            
-            # 특허명 가져오기 (확인용)
-            tech_nm = str(row[COL_PATENT_PROJECT_NAME]).strip() if pd.notna(row[COL_PATENT_PROJECT_NAME]) else ""
-            
-            # 발명자 정보 (확인용)
-            invntr_nm = str(row['invntr_nm']).strip() if pd.notna(row['invntr_nm']) else ""
-            invntr_co_nm = str(row['invntr_co_nm']).strip() if pd.notna(row['invntr_co_nm']) else ""
-            
-            # 교수 정보 추출
-            professor_info = {
-                "SQ": str(row[COL_EMP_SQ]) if pd.notna(row[COL_EMP_SQ]) else "",
-                "EMP_NO": str(row[COL_EMP_NO]) if pd.notna(row[COL_EMP_NO]) else "",
-                "NM": str(row[COL_EMP_NM]) if pd.notna(row[COL_EMP_NM]) else "",
-                "GEN_GBN": str(row[COL_EMP_GEN_GBN]) if pd.notna(row[COL_EMP_GEN_GBN]) else "",
-                "BIRTH_DT": str(row[COL_EMP_BIRTH_DT]) if pd.notna(row[COL_EMP_BIRTH_DT]) else "",
-                "NAT_GBN": str(row[COL_EMP_NAT_GBN]) if pd.notna(row[COL_EMP_NAT_GBN]) else "",
-                "RECHER_REG_NO": str(row[COL_EMP_RECHER_REG_NO]) if pd.notna(row[COL_EMP_RECHER_REG_NO]) else "",
-                "WKGD_NM": str(row[COL_EMP_WKGD_NM]) if pd.notna(row[COL_EMP_WKGD_NM]) else "",
-                "COLG_NM": str(row[COL_EMP_COLG_NM]) if pd.notna(row[COL_EMP_COLG_NM]) else "",
-                "HG_NM": str(row[COL_EMP_HG_NM]) if pd.notna(row[COL_EMP_HG_NM]) else "",
-                "HOOF_GBN": str(row[COL_EMP_HOOF_GBN]) if pd.notna(row[COL_EMP_HOOF_GBN]) else "",
-                "HANDP_NO": str(row[COL_EMP_HANDP_NO]) if pd.notna(row[COL_EMP_HANDP_NO]) else "",
-                "OFCE_TELNO": str(row[COL_EMP_OFCE_TELNO]) if pd.notna(row[COL_EMP_OFCE_TELNO]) else "",
-                "EMAIL": str(row[COL_EMP_EMAIL]) if pd.notna(row[COL_EMP_EMAIL]) else "",
+        register_id = _str_value(row.get(COL_PATENT_REGISTER_ID)).strip()
+        if not register_id:
+            continue
+        result.append(
+            {
+                "ptnt_rgstr_id": register_id,
+                "ptnt_rgstr_id_clean": register_id.replace("-", ""),
+                "tech_nm": _str_value(row.get(COL_PATENT_PROJECT_NAME)).strip(),
+                "invntr_nm": _str_value(row.get("invntr_nm")).strip(),
+                "invntr_co_nm": _str_value(row.get("invntr_co_nm")).strip(),
+                "mbr_sn": _str_value(row.get(COL_PATENT_MBR_SN)),
+                "professor_info": _professor_info(row),
             }
-            
-            register_id_list.append({
-                "ptnt_rgstr_id": register_id,  # 원본 등록번호
-                "ptnt_rgstr_id_clean": register_id_clean,  # - 제거된 등록번호
-                "tech_nm": tech_nm,  # 특허명 (확인용)
-                "invntr_nm": invntr_nm,  # 발명자 이름 (확인용)
-                "invntr_co_nm": invntr_co_nm,  # 발명자 소속 (확인용)
-                "mbr_sn": str(row[COL_PATENT_MBR_SN]) if pd.notna(row[COL_PATENT_MBR_SN]) else "",
-                "professor_info": professor_info
-            })
-    
-    return register_id_list
+        )
+    return result
 
 
-def get_project_statistics(conn: mariadb.Connection) -> Dict[str, int]:
-    """
-    연구과제 데이터 통계 정보를 조회합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        
-    Returns:
-        통계 정보 딕셔너리
-    """
-    stats = {}
-    
-    # 1. 연구과제 테이블 전체 데이터 개수
-    query_total = f"SELECT COUNT(*) as total_count FROM {TABLE_PROJECT}"
-    df_total = pd.read_sql(query_total, conn)
-    stats['total_records'] = int(df_total.iloc[0]['total_count'])
-    
-    # 2. PRJ_NM이 있는 데이터 개수
-    query_with_name = f"""
-        SELECT COUNT(*) as count_with_name
-        FROM {TABLE_PROJECT}
-        WHERE {COL_PROJECT_PRJ_NM} IS NOT NULL 
-            AND {COL_PROJECT_PRJ_NM} != ''
-    """
-    df_with_name = pd.read_sql(query_with_name, conn)
-    stats['records_with_project_name'] = int(df_with_name.iloc[0]['count_with_name'])
-    
-    # 3. 교수 정보 매칭된 데이터 개수
-    query_matched = f"""
-        SELECT COUNT(DISTINCT p.{COL_PROJECT_PRJ_NM}) as matched_count
-        FROM {TABLE_PROJECT} p
-        INNER JOIN {TABLE_EMPLOYEE} e ON CAST(p.{COL_PROJECT_RSPR_EMP_ID} AS CHAR) = CAST(e.{COL_EMP_NO} AS CHAR)
-        WHERE p.{COL_PROJECT_PRJ_NM} IS NOT NULL 
-            AND p.{COL_PROJECT_PRJ_NM} != ''
-            AND p.{COL_PROJECT_RSPR_EMP_ID} IS NOT NULL
-            AND p.{COL_PROJECT_RSPR_EMP_ID} != ''
-    """
-    df_matched = pd.read_sql(query_matched, conn)
-    stats['records_matched_with_professor'] = int(df_matched.iloc[0]['matched_count'])
-    
-    return stats
+def get_project_statistics(conn: IndigoApiClient) -> Dict[str, int]:
+    project_df = get_api_dataframe(CAT_PROJECT, conn)
+    project_prof = get_project_with_professor_info(conn)
+
+    with_name = _non_empty_mask(project_df, COL_PROJECT_PRJ_NM).sum() if COL_PROJECT_PRJ_NM in project_df else 0
+    matched = {
+        item["project_data"].get(COL_PROJECT_PRJ_NM)
+        for item in project_prof
+        if item.get("professor_info") and item.get("project_data", {}).get(COL_PROJECT_PRJ_NM)
+    }
+
+    return {
+        "total_records": int(len(project_df)),
+        "records_with_project_name": int(with_name),
+        "records_matched_with_professor": len(matched),
+    }
 
 
-def get_project_data(conn: mariadb.Connection, limit: Optional[int] = None) -> List[Dict]:
-    """
-    연구과제 데이터를 조회합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        limit: 가져올 최대 개수 (None이면 전체)
-        
-    Returns:
-        연구과제 데이터 리스트 (모든 컬럼 포함)
-    """
-    query = f"SELECT * FROM {TABLE_PROJECT}"
+def get_project_data(conn: IndigoApiClient, limit: Optional[int] = None) -> List[Dict]:
+    return [_row_to_dict(row) for row in get_api_rows(CAT_PROJECT, conn=conn, limit=limit)]
+
+
+def get_project_with_professor_info(conn: IndigoApiClient, limit: Optional[int] = None) -> List[Dict]:
+    project_df = get_api_dataframe(CAT_PROJECT, conn)
+    emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
+    _ensure_columns(project_df, [COL_PROJECT_RSPR_EMP_ID])
+    _ensure_columns(emp_df, EMPLOYEE_COLUMNS)
+
+    project_df = project_df.copy()
+    emp_df = emp_df.copy()
+    project_df["_emp_key"] = project_df[COL_PROJECT_RSPR_EMP_ID].map(_key)
+    emp_df["_emp_key"] = emp_df[COL_EMP_NO].map(_key)
+    df = project_df.merge(emp_df[EMPLOYEE_COLUMNS + ["_emp_key"]], on="_emp_key", how="left", suffixes=("", "_emp"))
     if limit:
-        query += f" LIMIT {limit}"
-    query += ";"
-    
-    df = pd.read_sql(query, conn)
-    
-    # 딕셔너리 리스트로 변환
-    project_list = []
+        df = df.head(limit)
+
+    project_columns = [col for col in project_df.columns if col != "_emp_key"]
+    result = []
     for _, row in df.iterrows():
-        project_data = {}
-        for col in df.columns:
-            value = row[col]
-            if pd.notna(value):
-                # 숫자 타입은 그대로, 문자열은 str로 변환
-                if isinstance(value, (int, float)):
-                    project_data[col] = value
-                else:
-                    project_data[col] = str(value)
-            else:
-                project_data[col] = None
-        project_list.append(project_data)
-    
-    return project_list
+        project_data = {col: _json_value(row.get(col)) for col in project_columns}
+        has_professor = bool(_str_value(row.get(COL_EMP_SQ)))
+        result.append(
+            {
+                "project_data": project_data,
+                "professor_info": _professor_info(row) if has_professor else None,
+            }
+        )
+    return result
 
 
-def get_project_with_professor_info(conn: mariadb.Connection, limit: Optional[int] = None) -> List[Dict]:
-    """
-    연구과제 데이터와 교수 정보를 함께 조회합니다.
-    PRJ_RSPR_EMP_ID와 EMP_NO를 매핑합니다.
-    
-    Args:
-        conn: 데이터베이스 연결 객체
-        limit: 가져올 최대 개수 (None이면 전체)
-        
-    Returns:
-        [{"project_data": {...}, "professor_info": {...}}, ...] 형태의 리스트
-    """
-    query = f"""
-        SELECT 
-            p.*,
-            e.{COL_EMP_SQ},
-            e.{COL_EMP_NO},
-            e.{COL_EMP_NM},
-            e.{COL_EMP_GEN_GBN},
-            e.{COL_EMP_BIRTH_DT},
-            e.{COL_EMP_NAT_GBN},
-            e.{COL_EMP_RECHER_REG_NO},
-            e.{COL_EMP_WKGD_NM},
-            e.{COL_EMP_COLG_NM},
-            e.{COL_EMP_HG_NM},
-            e.{COL_EMP_HOOF_GBN},
-            e.{COL_EMP_HANDP_NO},
-            e.{COL_EMP_OFCE_TELNO},
-            e.{COL_EMP_EMAIL}
-        FROM {TABLE_PROJECT} p
-        LEFT JOIN {TABLE_EMPLOYEE} e ON CAST(p.{COL_PROJECT_RSPR_EMP_ID} AS CHAR) = CAST(e.{COL_EMP_NO} AS CHAR)
-    """
-    if limit:
-        query += f" LIMIT {limit}"
-    query += ";"
-    
-    df = pd.read_sql(query, conn)
-    
-    # 딕셔너리 리스트로 변환
-    project_list = []
-    for _, row in df.iterrows():
-        # 프로젝트 데이터 추출 (교수 정보 컬럼 제외)
-        project_data = {}
-        professor_info = {}
-        
-        for col in df.columns:
-            if col in [COL_EMP_SQ, COL_EMP_NO, COL_EMP_NM, COL_EMP_GEN_GBN, 
-                      COL_EMP_BIRTH_DT, COL_EMP_NAT_GBN, COL_EMP_RECHER_REG_NO,
-                      COL_EMP_WKGD_NM, COL_EMP_COLG_NM, COL_EMP_HG_NM, 
-                      COL_EMP_HOOF_GBN, COL_EMP_HANDP_NO, COL_EMP_OFCE_TELNO, COL_EMP_EMAIL]:
-                # 교수 정보 컬럼
-                value = row[col]
-                if pd.notna(value):
-                    if isinstance(value, (int, float)):
-                        professor_info[col] = value
-                    else:
-                        professor_info[col] = str(value)
-                else:
-                    professor_info[col] = None
-            else:
-                # 프로젝트 데이터 컬럼
-                value = row[col]
-                if pd.notna(value):
-                    if isinstance(value, (int, float)):
-                        project_data[col] = value
-                    else:
-                        project_data[col] = str(value)
-                else:
-                    project_data[col] = None
-        
-        # professor_info 딕셔너리 키 이름 변경 (COL_EMP_* -> 실제 키 이름)
-        professor_info_formatted = {
-            "SQ": professor_info.get(COL_EMP_SQ, ""),
-            "EMP_NO": professor_info.get(COL_EMP_NO, ""),
-            "NM": professor_info.get(COL_EMP_NM, ""),
-            "GEN_GBN": professor_info.get(COL_EMP_GEN_GBN, ""),
-            "BIRTH_DT": professor_info.get(COL_EMP_BIRTH_DT, ""),
-            "NAT_GBN": professor_info.get(COL_EMP_NAT_GBN, ""),
-            "RECHER_REG_NO": professor_info.get(COL_EMP_RECHER_REG_NO, ""),
-            "WKGD_NM": professor_info.get(COL_EMP_WKGD_NM, ""),
-            "COLG_NM": professor_info.get(COL_EMP_COLG_NM, ""),
-            "HG_NM": professor_info.get(COL_EMP_HG_NM, ""),
-            "HOOF_GBN": professor_info.get(COL_EMP_HOOF_GBN, ""),
-            "HANDP_NO": professor_info.get(COL_EMP_HANDP_NO, ""),
-            "OFCE_TELNO": professor_info.get(COL_EMP_OFCE_TELNO, ""),
-            "EMAIL": professor_info.get(COL_EMP_EMAIL, ""),
-        }
-        
-        project_list.append({
-            "project_data": project_data,
-            "professor_info": professor_info_formatted if professor_info.get(COL_EMP_SQ) else None
-        })
-    
-    return project_list
+def _patent_professor_join(conn: IndigoApiClient) -> pd.DataFrame:
+    patent_df = get_api_dataframe(CAT_PATENT, conn)
+    inventor_df = get_api_dataframe(CAT_INVENTOR, conn)
+    emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
+
+    _ensure_columns(patent_df, [COL_PATENT_REGISTER_ID, COL_PATENT_MBR_SN, COL_PATENT_PROJECT_NAME])
+    _ensure_columns(inventor_df, ["mbr_sn", "invntr_nm", "invntr_co_nm", "invntr_se"])
+    _ensure_columns(emp_df, EMPLOYEE_COLUMNS)
+
+    patent_df = patent_df[
+        _non_empty_mask(patent_df, COL_PATENT_REGISTER_ID) & _non_empty_mask(patent_df, COL_PATENT_MBR_SN)
+    ].copy()
+    inventor_df = inventor_df[
+        _non_empty_mask(inventor_df, "mbr_sn")
+        & (inventor_df["mbr_sn"].map(_key) != "0")
+        & (inventor_df["invntr_se"].astype(str).str.strip() == "A00")
+    ].copy()
+
+    patent_df["_mbr_key"] = patent_df[COL_PATENT_MBR_SN].map(_key)
+    inventor_df["_mbr_key"] = inventor_df["mbr_sn"].map(_key)
+    merged = patent_df.merge(inventor_df, on="_mbr_key", how="inner", suffixes=("", "_inv"))
+
+    merged["_name_key"] = merged["invntr_nm"].map(_norm)
+    merged["_dept_key"] = merged["invntr_co_nm"].map(_norm)
+    emp_df = emp_df.copy()
+    emp_df["_name_key"] = emp_df[COL_EMP_NM].map(_norm)
+    emp_df["_dept_key"] = emp_df[COL_EMP_HG_NM].map(_norm)
+
+    return merged.merge(emp_df[EMPLOYEE_COLUMNS + ["_name_key", "_dept_key"]], on=["_name_key", "_dept_key"], how="inner")
+
+
+def _ensure_columns(df: pd.DataFrame, columns: List[str]) -> None:
+    for col in columns:
+        if col not in df.columns:
+            df[col] = pd.NA
+
+
+def _with_column_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(row)
+    for key, value in row.items():
+        if isinstance(key, str):
+            normalized.setdefault(key.upper(), value)
+    return normalized
+
+
+def _non_empty_mask(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df[column].notna() & (df[column].astype(str).str.strip() != "")
+
+
+def _professor_info(row: pd.Series) -> Dict[str, str]:
+    return {col: _str_value(row.get(col)) for col in EMPLOYEE_COLUMNS}
+
+
+def _row_to_dict(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: _json_value(value) for key, value in row.items()}
+
+
+def _json_value(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    return str(value)
+
+
+def _str_value(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _key(value: Any) -> str:
+    return _str_value(value).strip()
+
+
+def _norm(value: Any) -> str:
+    return _str_value(value).strip().lower()
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
 
 
 if __name__ == "__main__":
-    # 연결 테스트
     test_connection()
-
