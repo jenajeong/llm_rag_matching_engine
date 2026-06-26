@@ -4,10 +4,9 @@ MariaDB의 vw_inu_prj_info 테이블 데이터와 엑셀 파일 데이터를 결
 연구과제 데이터를 수집하고 JSON 파일로 저장합니다.
 """
 
-import mariadb
 import pandas as pd
 import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from pathlib import Path
 import sys
 
@@ -54,7 +53,7 @@ class ProjectCollector:
         self.json_file1 = Path(json_file1) if json_file1 else NTIS_INU_JSON_FILE
         self.json_file2 = Path(json_file2) if json_file2 else NTIS_INU_IACF_JSON_FILE
     
-    def get_statistics(self, conn: mariadb.Connection) -> Dict[str, int]:
+    def get_statistics(self, conn: Any) -> Dict[str, int]:
         """
         데이터베이스에서 통계 정보를 수집합니다.
         
@@ -137,7 +136,7 @@ class ProjectCollector:
         
         return merged_df
     
-    def get_db_projects(self, conn: mariadb.Connection, limit: Optional[int] = None) -> List[Dict]:
+    def get_db_projects(self, conn: Any, limit: Optional[int] = None) -> List[Dict]:
         """
         데이터베이스에서 연구과제 데이터를 가져옵니다.
         
@@ -150,7 +149,7 @@ class ProjectCollector:
         """
         return get_project_data(conn, limit)
     
-    def get_db_projects_with_professor(self, conn: mariadb.Connection, limit: Optional[int] = None) -> List[Dict]:
+    def get_db_projects_with_professor(self, conn: Any, limit: Optional[int] = None) -> List[Dict]:
         """
         데이터베이스에서 연구과제 데이터와 교수 정보를 함께 가져옵니다.
         

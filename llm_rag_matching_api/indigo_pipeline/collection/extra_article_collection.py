@@ -1,7 +1,6 @@
-import mariadb
 import pandas as pd
 import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from pathlib import Path
 import sys
 
@@ -38,7 +37,7 @@ def normalize(text):
     return str(text).strip().lower()
 
 
-def get_professor_info_by_emp_no(conn: mariadb.Connection, emp_no: str) -> Optional[Dict]:
+def get_professor_info_by_emp_no(conn: Any, emp_no: str) -> Optional[Dict]:
     if not emp_no or not str(emp_no).strip():
         return None
     
@@ -96,7 +95,7 @@ def load_paper_json() -> List[Dict]:
         return json.load(f)
 
 
-def add_professor_info_to_articles(articles: List[Dict], conn: mariadb.Connection, article_map) -> List[Dict]:
+def add_professor_info_to_articles(articles: List[Dict], conn: Any, article_map) -> List[Dict]:
     professor_cache = {}
     results = []
 
