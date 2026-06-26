@@ -20,8 +20,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.collection.database import (
     get_db_connection,
     close_db_connection,
-    TARGET_TABLE,
-    COL_PATENT_REGISTER_ID
+    get_patent_register_ids as load_patent_register_ids,
 )
 from indigo_pipeline.config import KIPRIS_API_KEY, PATENT_DATA_FILE
 
@@ -51,35 +50,10 @@ class KIPRISCollector:
 
     # ?꾩껜 ?깅줉踰덊샇 媛?몄삤???⑥닔濡?蹂寃?
     def get_patent_register_ids(self, conn, limit=None, verbose=False):
-
-        query = f"""
-        SELECT DISTINCT {COL_PATENT_REGISTER_ID}
-        FROM {TARGET_TABLE}
-        WHERE {COL_PATENT_REGISTER_ID} IS NOT NULL
-        AND {COL_PATENT_REGISTER_ID} != ''
-        """
-
-        if limit:
-            query += f" LIMIT {limit}"
-
-        df = pd.read_sql(query, conn)
-
-        result = []
-        for _, row in df.iterrows():
-            raw_id = str(row[COL_PATENT_REGISTER_ID]).strip()
-            clean_id = normalize_register_id(raw_id)
-
-            if not clean_id:
-                continue
-
-            result.append({
-                "ptnt_rgstr_id": raw_id,
-                "ptnt_rgstr_id_clean": clean_id,
-                "mbr_sn": "",
-                "professor_info": {}
-            })
-
-        return result
+        result = load_patent_register_ids(conn, limit=limit, verbose=verbose)
+        for item in result:
+            item["ptnt_rgstr_id_clean"] = normalize_register_id(item.get("ptnt_rgstr_id"))
+        return [item for item in result if item.get("ptnt_rgstr_id_clean")]
 
     def fetch_patent_data(self, register_id: str, mbr_sn: str = "", professor_info: Dict = None) -> Optional[Dict]:
 

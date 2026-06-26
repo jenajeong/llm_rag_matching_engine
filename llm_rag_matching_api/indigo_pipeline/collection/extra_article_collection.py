@@ -8,8 +8,11 @@ import sys
 # 상위 디렉토리를 경로에 추가
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.collection.database import (
+    CAT_ARTICLE,
+    CAT_EMPLOYEE,
     get_db_connection, 
     close_db_connection,
+    get_api_dataframe,
     TABLE_EMPLOYEE,
     COL_EMP_SQ,
     COL_EMP_NO,
@@ -41,29 +44,9 @@ def get_professor_info_by_emp_no(conn: mariadb.Connection, emp_no: str) -> Optio
     
     emp_no_clean = str(emp_no).strip()
     
-    query = f"""
-        SELECT 
-            {COL_EMP_SQ},
-            {COL_EMP_NO},
-            {COL_EMP_NM},
-            {COL_EMP_GEN_GBN},
-            {COL_EMP_BIRTH_DT},
-            {COL_EMP_NAT_GBN},
-            {COL_EMP_RECHER_REG_NO},
-            {COL_EMP_WKGD_NM},
-            {COL_EMP_COLG_NM},
-            {COL_EMP_HG_NM},
-            {COL_EMP_HOOF_GBN},
-            {COL_EMP_HANDP_NO},
-            {COL_EMP_OFCE_TELNO},
-            {COL_EMP_EMAIL}
-        FROM {TABLE_EMPLOYEE}
-        WHERE CAST({COL_EMP_NO} AS CHAR) = '{emp_no_clean}'
-        LIMIT 1
-    """
-    
     try:
-        df = pd.read_sql(query, conn)
+        df = get_api_dataframe(CAT_EMPLOYEE, conn)
+        df = df[df[COL_EMP_NO].astype(str).str.strip() == emp_no_clean].head(1)
         if df.empty:
             return None
         
@@ -91,7 +74,7 @@ def get_professor_info_by_emp_no(conn: mariadb.Connection, emp_no: str) -> Optio
 
 
 def load_article_map(conn):
-    df = pd.read_sql("SELECT THSS_NM, THSS_PATICP_GBN, JRNL_GBN, YY FROM v_emp1_3", conn)
+    df = get_api_dataframe(CAT_ARTICLE, conn)
 
     article_map = {}
     for _, row in df.iterrows():
@@ -208,11 +191,10 @@ def main():
             if isinstance(title, str):
                 existing_titles.add(normalize(title))
 
-        df_all = pd.read_sql("""
-            SELECT *
-            FROM v_emp1_3
-            WHERE CAST(YY AS SIGNED) >= 2015
-        """, conn)
+        df_all = get_api_dataframe(CAT_ARTICLE, conn)
+        if "YY" in df_all.columns:
+            years = pd.to_numeric(df_all["YY"], errors="coerce")
+            df_all = df_all[years >= 2015]
 
         extra_items = []
 

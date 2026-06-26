@@ -12,10 +12,12 @@ import sys
 # 상위 디렉토리를 경로에 추가
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.collection.database import (
+    CAT_EMPLOYEE,
+    CAT_PATENT,
+    EMPLOYEE_COLUMNS,
     get_db_connection,
     close_db_connection,
-    TABLE_PATENT,
-    TABLE_EMPLOYEE,
+    get_api_dataframe,
     COL_PATENT_PROJECT_NAME,
     COL_PATENT_MBR_SN,
     COL_EMP_SQ,
@@ -46,33 +48,20 @@ def get_patent_names_with_professor(conn: mariadb.Connection) -> List[Dict]:
     Returns:
         [{"tech_nm": "...", "mbr_sn": "...", "professor_info": {...}}, ...] 형태의 리스트
     """
-    query = f"""
-        SELECT DISTINCT 
-            t.{COL_PATENT_PROJECT_NAME}, 
-            t.{COL_PATENT_MBR_SN},
-            e.{COL_EMP_SQ},
-            e.{COL_EMP_NO},
-            e.{COL_EMP_NM},
-            e.{COL_EMP_GEN_GBN},
-            e.{COL_EMP_BIRTH_DT},
-            e.{COL_EMP_NAT_GBN},
-            e.{COL_EMP_RECHER_REG_NO},
-            e.{COL_EMP_WKGD_NM},
-            e.{COL_EMP_COLG_NM},
-            e.{COL_EMP_HG_NM},
-            e.{COL_EMP_HOOF_GBN},
-            e.{COL_EMP_HANDP_NO},
-            e.{COL_EMP_OFCE_TELNO},
-            e.{COL_EMP_EMAIL}
-        FROM {TABLE_PATENT} t
-        INNER JOIN {TABLE_EMPLOYEE} e ON CAST(t.{COL_PATENT_MBR_SN} AS CHAR) = CAST(e.{COL_EMP_SQ} AS CHAR)
-        WHERE t.{COL_PATENT_PROJECT_NAME} IS NOT NULL 
-            AND t.{COL_PATENT_PROJECT_NAME} != ''
-            AND t.{COL_PATENT_MBR_SN} IS NOT NULL
-            AND t.{COL_PATENT_MBR_SN} != ''
-    """
-    
-    df = pd.read_sql(query, conn)
+    patent_df = get_api_dataframe(CAT_PATENT, conn)
+    emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
+
+    df = patent_df[
+        patent_df[COL_PATENT_PROJECT_NAME].notna()
+        & (patent_df[COL_PATENT_PROJECT_NAME].astype(str).str.strip() != "")
+        & patent_df[COL_PATENT_MBR_SN].notna()
+        & (patent_df[COL_PATENT_MBR_SN].astype(str).str.strip() != "")
+    ].copy()
+    df["_mbr_key"] = df[COL_PATENT_MBR_SN].astype(str).str.strip()
+    emp_df = emp_df.copy()
+    emp_df["_sq_key"] = emp_df[COL_EMP_SQ].astype(str).str.strip()
+    df = df.merge(emp_df[EMPLOYEE_COLUMNS + ["_sq_key"]], left_on="_mbr_key", right_on="_sq_key", how="inner")
+    df = df.drop_duplicates(subset=[COL_PATENT_PROJECT_NAME, COL_PATENT_MBR_SN])
     
     # 딕셔너리 리스트로 변환
     patent_list = []

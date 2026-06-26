@@ -9,7 +9,14 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR.parent))
 
-from indigo_pipeline.collection.database import get_db_connection, close_db_connection
+from indigo_pipeline.collection.database import (
+    CAT_EMPLOYEE,
+    CAT_INVENTOR,
+    CAT_PATENT,
+    get_api_dataframe,
+    get_db_connection,
+    close_db_connection,
+)
 from indigo_pipeline.config import PATENT_DATA_FILE
 
 # =========================
@@ -53,7 +60,7 @@ def get_existing_names(data):
 # 교수 map
 # =========================
 def get_professor_map(conn):
-    df = pd.read_sql("SELECT * FROM v_emp1", conn)
+    df = get_api_dataframe(CAT_EMPLOYEE, conn)
 
     prof_map = {}
 
@@ -94,7 +101,7 @@ def get_professor_map(conn):
 # 발명자 map (inu_tech_sn 기준)
 # =========================
 def build_inventor_map(conn):
-    df = pd.read_sql("SELECT * FROM tb_inu_tech_invntr_v2026_0115", conn)
+    df = get_api_dataframe(CAT_INVENTOR, conn)
 
     inv_map = {}
 
@@ -203,7 +210,7 @@ def main():
         conn = get_db_connection()
 
         print("📌 특허 전체 조회")
-        patent_df = pd.read_sql("SELECT * FROM tb_inu_tech", conn)
+        patent_df = get_api_dataframe(CAT_PATENT, conn)
         print(f"DB 전체 개수: {len(patent_df)}")
 
         print("📌 발명자 매핑 생성")
