@@ -15,7 +15,6 @@
 - 실패/에러도 기록하여 재검색 방지
 """
 
-import mariadb
 import pandas as pd
 from playwright.sync_api import sync_playwright
 import time
@@ -60,10 +59,9 @@ def main() -> None:
         print("\n[미리보기 TOP 10 - 최신순]")
         print(df_emp[[COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM, COL_ARTICLE_PUBLSH_DT]].head(10))
 
-    except mariadb.Error as e:
-        print("MariaDB 연결 실패!")
-        print("오류 코드:", e.errno)
-        print("오류 메시지:", e.msg)
+    except Exception as e:
+        print("Indigo API 데이터 조회 실패!")
+        print("오류:", e)
         sys.exit(1)
 
     EBSCO_URL = "https://research.ebsco.com/c/4zvbuh/search"
