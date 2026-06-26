@@ -236,18 +236,9 @@ def get_patent_statistics(conn: IndigoApiClient) -> Dict[str, int]:
 
 
 def get_patent_application_ids(conn: IndigoApiClient, limit: Optional[int] = None) -> List[Dict]:
-    patent_df = get_api_dataframe(CAT_PATENT, conn)
-    emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
-    _ensure_columns(patent_df, [COL_PATENT_APP_ID, COL_PATENT_MBR_SN])
-    _ensure_columns(emp_df, EMPLOYEE_COLUMNS)
-
-    df = patent_df[
-        _non_empty_mask(patent_df, COL_PATENT_APP_ID) & _non_empty_mask(patent_df, COL_PATENT_MBR_SN)
-    ].copy()
-    df["_mbr_sn_key"] = df[COL_PATENT_MBR_SN].map(_key)
-    emp_df = emp_df.copy()
-    emp_df["_sq_key"] = emp_df[COL_EMP_SQ].map(_key)
-    df = df.merge(emp_df[EMPLOYEE_COLUMNS + ["_sq_key"]], left_on="_mbr_sn_key", right_on="_sq_key", how="inner")
+    df = _patent_professor_join(conn)
+    _ensure_columns(df, [COL_PATENT_APP_ID])
+    df = df[_non_empty_mask(df, COL_PATENT_APP_ID)].copy()
     if limit:
         df = df.head(limit)
 
@@ -348,6 +339,9 @@ def _patent_professor_join(conn: IndigoApiClient) -> pd.DataFrame:
     patent_df = get_api_dataframe(CAT_PATENT, conn)
     inventor_df = get_api_dataframe(CAT_INVENTOR, conn)
     emp_df = get_api_dataframe(CAT_EMPLOYEE, conn)
+
+    if "mbr_sn" not in inventor_df.columns:
+        raise RuntimeError("Indigo API cat=inu_tech_invntr must include mbr_sn for patent-professor matching.")
 
     _ensure_columns(patent_df, [COL_PATENT_REGISTER_ID, COL_PATENT_MBR_SN, COL_PATENT_PROJECT_NAME])
     _ensure_columns(inventor_df, ["mbr_sn", "invntr_nm", "invntr_co_nm", "invntr_se"])
