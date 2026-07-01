@@ -43,6 +43,60 @@ from indigo_pipeline.config import (
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SEARCH_INPUT_SELECTOR = "input#search-input, input[data-auto='search-input'], input[type='search']"
+INVALID_JOURNAL_LABELS = {
+    "湲고??숈닠吏(鍮꾩젙湲곕컻?됲븰?좎?)",
+    "기타학술지(비정기발간학술지)",
+}
+
+
+def has_collection_value(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    if pd.isna(value):
+        return False
+    return bool(str(value).strip())
+
+
+def is_valid_article_metadata(row) -> bool:
+    for column in ("THSS_PATICP_GBN", "JRNL_GBN"):
+        if column not in row or not has_collection_value(row[column]):
+            return False
+
+    jrnl_gbn = str(row["JRNL_GBN"]).strip()
+    return jrnl_gbn not in INVALID_JOURNAL_LABELS
+
+
+def apply_article_prefilter(df: pd.DataFrame) -> pd.DataFrame:
+    before = len(df)
+    if "YY" in df.columns:
+        years = pd.to_numeric(df["YY"], errors="coerce")
+        df = df[years >= 2015].copy()
+        print(f"[Article] filter-article 연도 조건 사전 적용: {before}건 -> {len(df)}건")
+        before = len(df)
+
+    missing_columns = [column for column in ("THSS_PATICP_GBN", "JRNL_GBN") if column not in df.columns]
+    if missing_columns:
+        print(f"[Article] 메타데이터 컬럼 없음: {missing_columns}. 메타데이터 사전 필터는 건너뜁니다.")
+        return df
+
+    df = df[df.apply(is_valid_article_metadata, axis=1)].copy()
+    print(f"[Article] filter-article 메타데이터 조건 사전 적용: {before}건 -> {len(df)}건")
+    return df.reset_index(drop=True)
+
+
+def goto_search_page(page, search_url: str, timeout_ms: int = 60000) -> bool:
+    try:
+        page.goto(search_url, wait_until="domcontentloaded", timeout=timeout_ms)
+        return True
+    except PlaywrightTimeoutError as e:
+        print(f"  [EBSCO] 검색 페이지 이동 시간 초과. 페이지 로딩을 중단하고 복구합니다: {e}")
+        try:
+            page.evaluate("window.stop()")
+        except Exception:
+            pass
+        return False
 
 
 def login_to_ebsco_if_needed(page) -> None:
@@ -84,7 +138,7 @@ def ensure_ebsco_search_ready(page, search_url: str, attempts: int = 2):
             return search_input
         except PlaywrightTimeoutError:
             print(f"  [EBSCO] 검색창 준비 안 됨 ({attempt}/{attempts}). 검색 페이지를 다시 불러옵니다.")
-            page.goto(search_url, wait_until="domcontentloaded")
+            goto_search_page(page, search_url)
             login_to_ebsco_if_needed(page)
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
@@ -108,6 +162,7 @@ def main() -> None:
         # 논문 데이터 조회 (2015년 이상)
         print("\n[Article] 논문 데이터 조회 중...")
         df_emp = get_article_data(conn, min_year=2015)
+        df_emp = apply_article_prefilter(df_emp)
     
         print(f"[Article] 2015년 이후 필터링/중복 제거 완료: {len(df_emp)}건")
         print("[Article] 게재일자 기준 최신순 정렬 완료")
@@ -153,6 +208,7 @@ def main() -> None:
             })
 
     total_queries = len(queries)
+    target_titles = {q["THSS_NM"] for q in queries}
     print(f"\n총 {total_queries}개의 논문 제목을 검색합니다.")
 
     # 湲곗〈 寃곌낵 ?뚯씪???덉쑝硫?濡쒕뱶 (以묎컙 ??μ슜)
@@ -164,6 +220,14 @@ def main() -> None:
     try:
         with open(output_file, 'r', encoding='utf-8') as f:
             existing_results = json.load(f)
+            before_existing = len(existing_results)
+            existing_results = [
+                item for item in existing_results
+                if str(item.get('THSS_NM', '')).strip() in target_titles
+            ]
+            removed_existing = before_existing - len(existing_results)
+            if removed_existing:
+                print(f"기존 결과 중 이번 수집 대상이 아닌 {removed_existing}건은 제외합니다.")
             for item in existing_results:
                 if "EMP_NO" in item and not isinstance(item["EMP_NO"], list):
                     item["EMP_NO"] = [str(item["EMP_NO"])]
@@ -185,7 +249,7 @@ def main() -> None:
         context = browser.new_context()
         page = context.new_page()
 
-        page.goto(EBSCO_URL, wait_until="domcontentloaded")
+        goto_search_page(page, EBSCO_URL)
         login_to_ebsco_if_needed(page)
         # input("寃??媛?ν븳 ?곹깭硫?Enter...")  # ?ㅻ뱶由ъ뒪 紐⑤뱶?먯꽌??遺덊븘??
 
@@ -210,7 +274,7 @@ def main() -> None:
                     current_url = page.url
                     if "search" not in current_url:
                         print("  [정보] 홈화면 감지, 검색 페이지로 이동 중...")
-                        page.goto(EBSCO_URL, wait_until="domcontentloaded")
+                        goto_search_page(page, EBSCO_URL)
                         login_to_ebsco_if_needed(page)
                         time.sleep(1.5)
 
@@ -558,7 +622,7 @@ def main() -> None:
                             # ?ㅻ쪟媛 諛쒖깮?대룄 寃???섏씠吏濡??뚯븘媛湲??쒕룄
                             try:
                                 if "search" not in page.url:
-                                    page.goto(EBSCO_URL, wait_until="domcontentloaded")
+                                    goto_search_page(page, EBSCO_URL)
                                     login_to_ebsco_if_needed(page)
                                     time.sleep(0.5)
                             except:
