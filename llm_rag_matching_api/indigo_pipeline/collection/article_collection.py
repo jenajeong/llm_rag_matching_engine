@@ -22,6 +22,12 @@ import json
 from pathlib import Path
 import sys
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except AttributeError:
+    pass
+
 # ?곸쐞 ?붾젆?좊━瑜?寃쎈줈??異붽?
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.collection.database import get_db_connection, close_db_connection, get_article_data, COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM, COL_ARTICLE_PUBLSH_DT
@@ -49,7 +55,7 @@ def login_to_ebsco_if_needed(page) -> None:
     if not EBSCO_USERNAME or not EBSCO_PASSWORD:
         raise RuntimeError("EBSCO_USERNAME and EBSCO_PASSWORD are required for EBSCO login.")
 
-    print("[EBSCO] Login required. Signing in...")
+    print("[EBSCO] 로그인이 필요합니다. 로그인합니다.")
     prompt_input.fill(EBSCO_USERNAME)
     prompt_input.press("Enter")
 
@@ -66,7 +72,7 @@ def login_to_ebsco_if_needed(page) -> None:
     try:
         page.wait_for_selector(SEARCH_INPUT_SELECTOR, timeout=30000)
     except PlaywrightTimeoutError:
-        print("[EBSCO] Login submitted; search input not visible yet.")
+        print("[EBSCO] 로그인 요청 완료. 아직 검색창이 보이지 않습니다.")
 
 
 def ensure_ebsco_search_ready(page, search_url: str, attempts: int = 2):
@@ -77,7 +83,7 @@ def ensure_ebsco_search_ready(page, search_url: str, attempts: int = 2):
             search_input.wait_for(state="visible", timeout=8000)
             return search_input
         except PlaywrightTimeoutError:
-            print(f"  [EBSCO] Search input not ready (attempt {attempt}/{attempts}). Reloading search page...")
+            print(f"  [EBSCO] 검색창 준비 안 됨 ({attempt}/{attempts}). 검색 페이지를 다시 불러옵니다.")
             page.goto(search_url, wait_until="domcontentloaded")
             login_to_ebsco_if_needed(page)
             try:
@@ -99,22 +105,21 @@ def main() -> None:
     try:
         conn = get_db_connection()
     
-        # ?쇰Ц ?곗씠??議고쉶 (2015???댁긽)
-        print("\n?뱴 ?쇰Ц ?곗씠??議고쉶 以?..")
+        # 논문 데이터 조회 (2015년 이상)
+        print("\n[Article] 논문 데이터 조회 중...")
         df_emp = get_article_data(conn, min_year=2015)
     
-        print(f"Filtered article rows since 2015: {len(df_emp)}")
-        print(f"Deduplicated article rows: {len(df_emp)}")
-        print("Article rows sorted by publication date.")
+        print(f"[Article] 2015년 이후 필터링/중복 제거 완료: {len(df_emp)}건")
+        print("[Article] 게재일자 기준 최신순 정렬 완료")
     
-        # ?뺤씤
-        print("\n珥?(EMP_NO, THSS_NM) ?명듃 ??", len(df_emp))
-        print("\n[誘몃━蹂닿린 TOP 10 - 理쒖떊??")
+        # 확인
+        print("\n[Article] (EMP_NO, THSS_NM) 쌍 개수:", len(df_emp))
+        print("\n[Article] 미리보기 TOP 10")
         print(df_emp[[COL_ARTICLE_EMP_NO, COL_ARTICLE_THSS_NM, COL_ARTICLE_PUBLSH_DT]].head(10))
 
     except Exception as e:
-        print("Indigo API ?곗씠??議고쉶 ?ㅽ뙣!")
-        print("?ㅻ쪟:", e)
+        print("Indigo API 데이터 조회 실패!")
+        print("오류:", e)
         sys.exit(1)
 
     EBSCO_URL = "https://research.ebsco.com/c/4zvbuh/search"
@@ -148,7 +153,7 @@ def main() -> None:
             })
 
     total_queries = len(queries)
-    print(f"\n珥?{total_queries}媛쒖쓽 ?쇰Ц ?쒕ぉ??寃?됲빀?덈떎.")
+    print(f"\n총 {total_queries}개의 논문 제목을 검색합니다.")
 
     # 湲곗〈 寃곌낵 ?뚯씪???덉쑝硫?濡쒕뱶 (以묎컙 ??μ슜)
     output_file = Path(ARTICLE_PAPER_NO_PROFESSOR_FILE)
@@ -163,15 +168,15 @@ def main() -> None:
                 if "EMP_NO" in item and not isinstance(item["EMP_NO"], list):
                     item["EMP_NO"] = [str(item["EMP_NO"])]
             processed_titles = set([str(item.get('THSS_NM', '')) for item in existing_results if item.get('THSS_NM')])
-            print(f"Loaded existing article results: {len(existing_results)}")
-            print(f"Already processed titles: {len(processed_titles)}")
+            print(f"기존 논문 결과 로드 완료: {len(existing_results)}건")
+            print(f"이미 처리된 제목: {len(processed_titles)}건")
             # 湲곗〈 ?뚯씪??EMP_NO媛 ?놁쑝硫?異붽? (?명솚?깆쓣 ?꾪빐)
             if existing_results and 'EMP_NO' not in existing_results[0].keys():
-                print("  ?좑툘 寃쎄퀬: 湲곗〈 ?뚯씪??EMP_NO 而щ읆???놁뒿?덈떎. ???곗씠?곕???EMP_NO媛 ?ы븿?⑸땲??")
+                print("  [경고] 기존 결과 파일에 EMP_NO 컬럼이 없습니다. 새 결과에는 EMP_NO가 포함됩니다.")
     except FileNotFoundError:
-        print("湲곗〈 寃곌낵 ?뚯씪???놁뒿?덈떎. ?덈줈 ?쒖옉?⑸땲??")
+        print("기존 결과 파일이 없습니다. 새로 시작합니다.")
     except Exception as e:
-        print(f"湲곗〈 ?뚯씪 濡쒕뱶 以??ㅻ쪟 (臾댁떆?섍퀬 怨꾩냽 吏꾪뻾): {e}")
+        print(f"기존 결과 파일 로드 중 오류가 발생했습니다. 계속 진행합니다: {e}")
 
     results = existing_results.copy() if existing_results else []
 
@@ -195,7 +200,7 @@ def main() -> None:
             
                 # ?대? 泥섎━???쇰Ц? 嫄대꼫?곌린
                 if str(q) in processed_titles:
-                    print(f"[{i}/{total_queries}] ?대? 泥섎━??- 嫄대꼫?: {q[:50]}...")
+                    print(f"[{i}/{total_queries}] 이미 처리됨 - 건너뜀: {q[:50]}...")
                     continue
             
                 print(f"[{i}/{total_queries}] Searching: {q}")
@@ -204,14 +209,14 @@ def main() -> None:
                     # ?꾩옱 URL ?뺤씤 - ?덊솕硫댁씠硫?寃???섏씠吏濡??대룞
                     current_url = page.url
                     if "search" not in current_url:
-                        print(f"  ???덊솕硫?媛먯?, 寃???섏씠吏濡??대룞 以?..")
+                        print("  [정보] 홈화면 감지, 검색 페이지로 이동 중...")
                         page.goto(EBSCO_URL, wait_until="domcontentloaded")
                         login_to_ebsco_if_needed(page)
                         time.sleep(1.5)
 
                     search_input = ensure_ebsco_search_ready(page, EBSCO_URL)
                     if search_input is None:
-                        print("  [EBSCO] Search input still unavailable. Marking as failed and continuing.")
+                        print("  [EBSCO] 검색창을 찾지 못했습니다. 실패로 기록하고 다음으로 진행합니다.")
                         results.append({
                             "EMP_NO": list(emp_no),
                             "THSS_NM": q,
@@ -255,7 +260,7 @@ def main() -> None:
                     # ?덊솕硫댁쑝濡?由щ떎?대젆?몃릺?덈뒗吏 ?ㅼ떆 ?뺤씤
                     current_url_after = page.url
                     if "search" not in current_url_after:
-                        print(f"  ??寃?????덊솕硫댁쑝濡??대룞??- 寃???ㅽ뙣")
+                        print("  [정보] 검색 후 홈화면으로 이동됨 - 검색 실패")
                         results.append({
                             "EMP_NO": list(emp_no),
                             "THSS_NM": q,
@@ -319,11 +324,11 @@ def main() -> None:
 
                     # ?붾쾭源??뺣낫 異쒕젰
                     if result_cnt == 0 and no_result_cnt == 0:
-                        print(f"  ???붾쾭源? h3-title={result_cnt_1}, link={result_cnt_link}, header-title={result_cnt_2}, header={result_cnt_3}, mark-in-h3={result_cnt_mark_in_h3}, mark-all={result_cnt_mark_all}, result-count-text={result_count_text}, no-result={no_result_cnt}, is-home={is_home_page}")
+                        print(f"  [디버그] h3={result_cnt_1}, link={result_cnt_link}, header_title={result_cnt_2}, header={result_cnt_3}, mark_in_h3={result_cnt_mark_in_h3}, mark_all={result_cnt_mark_all}, result_count_text={result_count_text}, no_result={no_result_cnt}, is_home={is_home_page}")
 
                     if is_home_page:
                         has_result = 0
-                        print("  ???덊솕硫댁쑝濡??대룞??(寃???ㅽ뙣) (0)")
+                        print("  [정보] 홈화면으로 이동됨. 검색 실패로 처리합니다. (0)")
                         results.append({
                             "EMP_NO": list(emp_no),
                             "THSS_NM": q,
@@ -332,7 +337,7 @@ def main() -> None:
                         processed_titles.add(str(q))  # 泥섎━ ?꾨즺 ?쒖떆
                     elif no_result_cnt > 0:
                         has_result = 0
-                        print("  ??寃??寃곌낵 ?놁쓬 (0)")
+                        print("  [정보] 검색 결과 없음 (0)")
                         # 寃??寃곌낵 ?놁쓬??JSON?????(?ъ떎?????ㅼ떆 寃?됲븯吏 ?딅룄濡?
                         results.append({
                             "EMP_NO": list(emp_no),
@@ -342,7 +347,7 @@ def main() -> None:
                         processed_titles.add(str(q))  # 泥섎━ ?꾨즺 ?쒖떆
                     elif result_cnt > 0 or result_cnt_mark_in_h3 >= 1 or result_cnt_mark_all >= 2 or result_count_text > 0:
                         has_result = 1
-                        print(f"  Search result found - h3={result_cnt_1}, link={result_cnt_link}, mark_in_h3={result_cnt_mark_in_h3}, mark_all={result_cnt_mark_all}, result_count_text={result_count_text}")
+                        print(f"  [정보] 검색 결과 있음 (1) - h3={result_cnt_1}, link={result_cnt_link}, mark_in_h3={result_cnt_mark_in_h3}, mark_all={result_cnt_mark_all}, result_count_text={result_count_text}")
                     
                         # 寃??寃곌낵媛 ?덉쑝硫?泥?踰덉㎏ 寃곌낵???곸꽭 ?섏씠吏濡??대룞?섏뿬 硫뷀??곗씠??異붿텧
                         paper_metadata = {"EMP_NO": list(emp_no), "THSS_NM": q, "has_result": 1}
@@ -427,13 +432,13 @@ def main() -> None:
                                             paper_metadata["Abstract"] = abstract_text
 
                                     else:
-                                        print("  ??硫뷀??곗씠???놁쓬 ??SCOPUS 吏꾪뻾")  # ?뵦 ?섏젙
+                                        print("  [정보] EBSCO 메타데이터 없음. SCOPUS 확인으로 진행합니다.")
 
                                     # =========================
                                     # SCOPUS fallback
                                     # =========================
                                     if not has_abstract:
-                                        print("  ?좑툘 珥덈줉 ?놁쓬 ??SCOPUS ?쒕룄")
+                                        print("  [정보] 초록 없음. SCOPUS 조회를 시도합니다.")
 
                                         scopus_page = None
 
@@ -442,12 +447,14 @@ def main() -> None:
 
                                             if dropdown_btn.count() > 0:
                                                 dropdown_btn.first.click()
-                                                page.wait_for_selector('[data-auto="menuitem-?깆옱---SCOPUS"]', timeout=5000)
-
-                                                scopus_item = page.locator('[data-auto="menuitem-?깆옱---SCOPUS"]')
+                                                scopus_item = page.get_by_text("SCOPUS", exact=False).first
+                                                try:
+                                                    scopus_item.wait_for(state="visible", timeout=5000)
+                                                except PlaywrightTimeoutError:
+                                                    scopus_item = page.locator('[role="menuitem"]').filter(has_text="SCOPUS").first
 
                                                 if scopus_item.count() > 0:
-                                                    print("  ??SCOPUS 硫붾돱 諛쒓껄")
+                                                    print("  [정보] SCOPUS 메뉴 발견")
 
                                                     with page.expect_popup() as popup_info:
                                                         scopus_item.first.click()
@@ -465,10 +472,10 @@ def main() -> None:
                                                         paper_metadata["Abstract_scopus"] = abstract
                                                         if not paper_metadata.get("Abstract"):
                                                             paper_metadata["Abstract"] = abstract
-                                                        print("  ??SCOPUS 珥덈줉 異붿텧 ?깃났")
+                                                        print("  [정보] SCOPUS 초록 추출 성공")
 
                                         except Exception as e:
-                                            print(f"  ??SCOPUS ?ㅽ뙣: {e}")
+                                            print(f"  [경고] SCOPUS 조회 실패: {e}")
 
                                         finally:
                                             try:
@@ -485,7 +492,7 @@ def main() -> None:
                                     # - ?숈씪 ?섏씠吏?먯꽌 ?ы깘??(?뚮뜑留?吏?????
                                     if not has_abstract:  
                                         try:
-                                            print("  ?봺 3李??щ·留??ъ떆??(EBSCO DOM ?ы솗??")
+                                            print("  [정보] 3차 재시도: EBSCO DOM 재확인")
 
                                             # 硫뷀??곗씠???곸뿭 ?ㅼ떆 ?먯깋
                                             metadata_retry = page.evaluate("""
@@ -529,25 +536,25 @@ def main() -> None:
 
                                                     has_abstract = True  # ?뵦 異붽?
                                                     paper_metadata["Abstract"] = abstract
-                                                    print("  ??3李??щ·留곸뿉??珥덈줉 諛쒓껄")
+                                                    print("  [정보] 3차 재시도에서 초록 발견")
                                                     break
 
                                         except Exception as e:
-                                            print(f"  ??3李??щ·留??ㅽ뙣: {e}")
+                                            print(f"  [경고] 3차 재시도 실패: {e}")
 
                                     extracted_fields = [k for k in paper_metadata.keys() if k not in ['THSS_NM', 'has_result', 'metadata_error', 'EMP_NO']]
-                                    print(f"  ??硫뷀??곗씠??異붿텧 ?꾨즺: {len(extracted_fields)}媛??꾨뱶 ({', '.join(extracted_fields[:3])}{'...' if len(extracted_fields) > 3 else ''})")
+                                    print(f"  [정보] 메타데이터 추출 완료: {len(extracted_fields)}개 필드 ({', '.join(extracted_fields[:3])}{'...' if len(extracted_fields) > 3 else ''})")
                                 
                                 else:
-                                    print("  ??留곹겕 href瑜?李얠쓣 ???놁쓬")
-                                    paper_metadata["metadata_error"] = "留곹겕 ?놁쓬"
+                                    print("  [경고] 결과 링크 href를 찾을 수 없음")
+                                    paper_metadata["metadata_error"] = "결과 링크 href 없음"
                             else:
-                                print("  ??寃곌낵 留곹겕瑜?李얠쓣 ???놁쓬")
-                                paper_metadata["metadata_error"] = "留곹겕 ?붿냼 ?놁쓬"
+                                print("  [경고] 결과 링크를 찾을 수 없음")
+                                paper_metadata["metadata_error"] = "결과 링크 요소 없음"
                             
                         except Exception as e:
-                            print(f"  ??硫뷀??곗씠??異붿텧 以??ㅻ쪟: {str(e)}")
-                            paper_metadata["metadata_error"] = f"?ㅻ쪟: {str(e)}"
+                            print(f"  [경고] 메타데이터 추출 중 오류: {str(e)}")
+                            paper_metadata["metadata_error"] = f"메타데이터 추출 오류: {str(e)}"
                             # ?ㅻ쪟媛 諛쒖깮?대룄 寃???섏씠吏濡??뚯븘媛湲??쒕룄
                             try:
                                 if "search" not in page.url:
@@ -562,7 +569,7 @@ def main() -> None:
                     
                     else:
                         has_result = 0
-                        print("  ??寃곌낵 ?먮퀎 ?ㅽ뙣(濡쒕뵫/援ъ“ 臾몄젣) (0) - JSON????ν븯吏 ?딆쓬")
+                        print("  [경고] 결과 판별 실패(로딩/구조 문제) (0) - JSON에 저장하지 않음")
                         # 寃곌낵 ?먮퀎 ?ㅽ뙣??寃쎌슦 results??異붽??섏? ?딆쓬 (湲곕줉留??섍퀬 ??μ? ????
                         processed_titles.add(str(q))  # 泥섎━ ?꾨즺 ?쒖떆留?(以묐났 諛⑹?)
 
@@ -574,9 +581,9 @@ def main() -> None:
                             # data ?대뜑?????
                             with open(output_file, 'w', encoding='utf-8') as f:
                                 json.dump(results, f, ensure_ascii=False, indent=2)
-                            print(f"  ?뮶 以묎컙 ????꾨즺 ({len(results)}媛?寃곌낵 ??λ맖)")
+                            print(f"  [정보] 중간 저장 완료 ({len(results)}개 결과 저장됨)")
                         except Exception as e:
-                            print(f"  ?좑툘 以묎컙 ????ㅽ뙣 (怨꾩냽 吏꾪뻾): {e}")
+                            print(f"  [경고] 중간 저장 실패. 계속 진행합니다: {e}")
 
                     # ?ㅼ쓬 寃??以鍮?(?덊솕硫댁씠 ?꾨땺 ?뚮쭔 ?대━??
                     current_url_before_clear = page.url
@@ -610,12 +617,12 @@ def main() -> None:
                 
                 except Exception as e:
                     # 媛쒕퀎 ?쇰Ц 泥섎━ 以??ㅻ쪟 諛쒖깮 (?ㅼ쓬 ?쇰Ц?쇰줈 怨꾩냽 吏꾪뻾)
-                    print(f"  ???ㅻ쪟 諛쒖깮 (?ㅼ쓬?쇰줈 吏꾪뻾): {str(e)}")
+                    print(f"  [오류] 오류 발생. 다음 논문으로 진행합니다: {str(e)}")
                     error_result = {
                         "EMP_NO": list(emp_no),
                         "THSS_NM": q,
                         "has_result": 0,
-                        "metadata_error": f"泥섎━ 以??ㅻ쪟: {str(e)}"
+                        "metadata_error": f"처리 중 오류: {str(e)}"
                     }
                     results.append(error_result)
                     processed_titles.add(str(q))  # 泥섎━ ?꾨즺 ?쒖떆
@@ -627,19 +634,19 @@ def main() -> None:
                             # data ?대뜑?????
                             with open(output_file, 'w', encoding='utf-8') as f:
                                 json.dump(results, f, ensure_ascii=False, indent=2)
-                            print(f"  ?뮶 以묎컙 ????꾨즺 ({len(results)}媛?寃곌낵 ??λ맖)")
+                            print(f"  [정보] 중간 저장 완료 ({len(results)}개 결과 저장됨)")
                         except Exception as save_error:
-                            print(f"  ?좑툘 以묎컙 ????ㅽ뙣: {save_error}")
+                            print(f"  [경고] 중간 저장 실패: {save_error}")
                 
                     continue  # ?ㅼ쓬 ?쇰Ц?쇰줈 怨꾩냽
 
         except KeyboardInterrupt:
-            print("\n\n?좑툘 ?ъ슜?먯뿉 ?섑빐 以묐떒?섏뿀?듬땲??")
+            print("\n\n사용자에 의해 중단되었습니다.")
             raise  # KeyboardInterrupt???ㅼ떆 諛쒖깮?쒖폒???뺤긽 醫낅즺 泥섎━
         
         except Exception as e:
-            print(f"\n\n???덉긽移?紐삵븳 ?ㅻ쪟 諛쒖깮: {str(e)}")
-            print("吏湲덇퉴吏 ?섏쭛???곗씠?곕? ??ν빀?덈떎...")
+            print(f"\n\n예상치 못한 오류 발생: {str(e)}")
+            print("지금까지 수집한 데이터를 저장합니다...")
         
         finally:
             # 釉뚮씪?곗? 醫낅즺
@@ -655,18 +662,18 @@ def main() -> None:
                     # data ?대뜑?????
                     with open(output_file, 'w', encoding='utf-8') as f:
                         json.dump(results, f, ensure_ascii=False, indent=2)
-                    print(f"\n??理쒖쥌 寃곌낵瑜?'{output_file}' ?뚯씪濡???ν뻽?듬땲?? (珥?{len(results)}媛?")
-                    print("\n=== 寃??寃곌낵 諛?硫뷀??곗씠??(?쇰?) ===")
+                    print(f"\n최종 결과를 '{output_file}' 파일로 저장했습니다. (총 {len(results)}개)")
+                    print("\n=== 검색 결과 및 메타데이터 예시 ===")
                     # JSON ?곗씠?곗쓽 泥섏쓬 10媛쒕쭔 異쒕젰
                     for i, item in enumerate(results[:10], 1):
                         print(f"{i}. {item.get('THSS_NM', 'N/A')[:50]}... (has_result: {item.get('has_result', 0)})")
                     if len(results) > 10:
                         print(f"... and {len(results) - 10} more")
                 else:
-                    print("\n?좑툘 ??ν븷 寃곌낵媛 ?놁뒿?덈떎.")
+                    print("\n저장할 결과가 없습니다.")
             except Exception as e:
-                print(f"\n??理쒖쥌 ???以??ㅻ쪟 諛쒖깮: {e}")
-                print("?섎룞?쇰줈 results 蹂?섏뿉???곗씠?곕? ?뺤씤?섏꽭??")
+                print(f"\n최종 저장 중 오류 발생: {e}")
+                print("필요하면 results 변수의 데이터를 수동으로 확인하세요.")
             finally:
                 # DB ?곌껐 醫낅즺
                 close_db_connection(conn)
@@ -674,3 +681,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
