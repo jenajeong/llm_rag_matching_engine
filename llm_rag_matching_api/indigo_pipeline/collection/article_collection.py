@@ -129,6 +129,16 @@ def login_to_ebsco_if_needed(page) -> None:
         print("[EBSCO] 로그인 요청 완료. 아직 검색창이 보이지 않습니다.")
 
 
+def open_ebsco_context(browser, search_url: str):
+    context = browser.new_context()
+    page = context.new_page()
+    page.set_default_timeout(15000)
+    page.set_default_navigation_timeout(60000)
+    goto_search_page(page, search_url)
+    login_to_ebsco_if_needed(page)
+    return context, page
+
+
 def ensure_ebsco_search_ready(page, search_url: str, attempts: int = 2):
     for attempt in range(1, attempts + 1):
         login_to_ebsco_if_needed(page)
@@ -234,6 +244,8 @@ def main() -> None:
             processed_titles = set([str(item.get('THSS_NM', '')) for item in existing_results if item.get('THSS_NM')])
             print(f"기존 논문 결과 로드 완료: {len(existing_results)}건")
             print(f"이미 처리된 제목: {len(processed_titles)}건")
+            remaining_titles = [q["THSS_NM"] for q in queries if q["THSS_NM"] not in processed_titles]
+            print(f"이번 실행에서 새로 검색할 제목: {len(remaining_titles)}건")
             # 湲곗〈 ?뚯씪??EMP_NO媛 ?놁쑝硫?異붽? (?명솚?깆쓣 ?꾪빐)
             if existing_results and 'EMP_NO' not in existing_results[0].keys():
                 print("  [경고] 기존 결과 파일에 EMP_NO 컬럼이 없습니다. 새 결과에는 EMP_NO가 포함됩니다.")
@@ -246,11 +258,7 @@ def main() -> None:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=INDIGO_BROWSER_HEADLESS)
-        context = browser.new_context()
-        page = context.new_page()
-
-        goto_search_page(page, EBSCO_URL)
-        login_to_ebsco_if_needed(page)
+        context, page = open_ebsco_context(browser, EBSCO_URL)
         # input("寃??媛?ν븳 ?곹깭硫?Enter...")  # ?ㅻ뱶由ъ뒪 紐⑤뱶?먯꽌??遺덊븘??
 
         # 以묎컙 ???二쇨린 (5媛쒕쭏?????
@@ -280,15 +288,23 @@ def main() -> None:
 
                     search_input = ensure_ebsco_search_ready(page, EBSCO_URL)
                     if search_input is None:
-                        print("  [EBSCO] 검색창을 찾지 못했습니다. 실패로 기록하고 다음으로 진행합니다.")
-                        results.append({
-                            "EMP_NO": list(emp_no),
-                            "THSS_NM": q,
-                            "has_result": 0,
-                            "ebsco_error": "search_input_unavailable"
-                        })
-                        processed_titles.add(str(q))
-                        continue
+                        print("  [EBSCO] 검색창 복구 실패. 새 브라우저 세션으로 한 번 더 시도합니다.")
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                        context, page = open_ebsco_context(browser, EBSCO_URL)
+                        search_input = ensure_ebsco_search_ready(page, EBSCO_URL, attempts=1)
+                        if search_input is None:
+                            print("  [EBSCO] 검색창을 찾지 못했습니다. 실패로 기록하고 다음으로 진행합니다.")
+                            results.append({
+                                "EMP_NO": list(emp_no),
+                                "THSS_NM": q,
+                                "has_result": 0,
+                                "ebsco_error": "search_input_unavailable"
+                            })
+                            processed_titles.add(str(q))
+                            continue
 
                     # 寃???낅젰 ?꾨뱶 ?대━????寃??
                     try:
@@ -303,12 +319,15 @@ def main() -> None:
                         pass
                 
                     # 寃?됱뼱 ?낅젰
-                    search_input.fill(q)
+                    search_input.fill(q, timeout=15000)
                     time.sleep(0.5)
-                    search_input.press("Enter")
+                    search_input.press("Enter", timeout=10000)
 
                     # 寃곌낵 濡쒕뵫 ?湲?(??異⑸텇???湲??쒓컙)
-                    page.wait_for_load_state("networkidle")
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                    except PlaywrightTimeoutError:
+                        print("  [정보] networkidle 대기 시간 초과. 현재 로드된 화면 기준으로 계속 진행합니다.")
                     time.sleep(3.0)  # SPA ?뚮뜑 ?덉젙??(?ㅻ뱶由ъ뒪 紐⑤뱶?먯꽌????湲??湲??꾩슂)
                 
                     # 寃??寃곌낵 ?붿냼媛 ?섑????뚭퉴吏 紐낆떆?곸쑝濡??湲??쒕룄 (理쒕? 5珥?
@@ -430,7 +449,7 @@ def main() -> None:
                                         detail_url = href
                                 
                                     # ?곸꽭 ?섏씠吏濡??대룞
-                                    page.goto(detail_url, wait_until="domcontentloaded")
+                                    page.goto(detail_url, wait_until="domcontentloaded", timeout=30000)
                                     time.sleep(1.5)  # ?섏씠吏 濡쒕뵫 ?湲?
                                 
                                     # 硫뷀??곗씠??異붿텧
@@ -520,11 +539,14 @@ def main() -> None:
                                                 if scopus_item.count() > 0:
                                                     print("  [정보] SCOPUS 메뉴 발견")
 
-                                                    with page.expect_popup() as popup_info:
+                                                    with page.expect_popup(timeout=10000) as popup_info:
                                                         scopus_item.first.click()
 
                                                     scopus_page = popup_info.value
-                                                    scopus_page.wait_for_load_state()
+                                                    try:
+                                                        scopus_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                                                    except PlaywrightTimeoutError:
+                                                        print("  [정보] SCOPUS 페이지 로딩 대기 시간 초과. 현재 화면 기준으로 확인합니다.")
 
                                                     scopus_page.wait_for_selector('[data-testid="document-details-abstract"]', timeout=5000)
 
