@@ -100,6 +100,37 @@ def _manifest_is_valid(path: Path, doc_type: str) -> bool:
     return all(_artifact_is_valid(Path(item), doc_type) for item in manifest.get("artifact_files", []))
 
 
+def _pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _lock_is_stale(lock_file: Path, stale_lock_seconds: int) -> bool:
+    try:
+        payload = _read_json(lock_file)
+        pid = int(payload.get("pid") or 0)
+        if pid and not _pid_is_running(pid):
+            print(f"Lock PID is not running. Treating as stale: pid={pid}, lock={lock_file}")
+            return True
+    except Exception:
+        pass
+
+    try:
+        age = time.time() - lock_file.stat().st_mtime
+        return age > stale_lock_seconds
+    except OSError:
+        return False
+
+
 def _create_manifest(doc_type: str, artifact_files: list[Path], output_file: Path) -> dict[str, Any]:
     manifest = {
         "doc_type": doc_type,
@@ -132,12 +163,7 @@ def _runner_lock(args: argparse.Namespace):
                 )
             break
         except FileExistsError:
-            stale = False
-            try:
-                age = time.time() - lock_file.stat().st_mtime
-                stale = age > args.stale_lock_seconds
-            except OSError:
-                stale = False
+            stale = _lock_is_stale(lock_file, args.stale_lock_seconds)
             if stale:
                 print(f"Removing stale lock: {lock_file}")
                 lock_file.unlink(missing_ok=True)
