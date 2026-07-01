@@ -134,7 +134,7 @@ class TextProcessor:
         self.stats["processed"] += 1
 
     def _doc_id(self, record: dict[str, Any], doc_type: str) -> str:
-        for key in ("doc_id", "source_id", "SQ", "APPL_NO"):
+        for key in ("no", "id", "doc_id", "source_id", "SQ", "APPL_NO"):
             value = record.get(key)
             if not is_nullish(value):
                 return as_text(value)
