@@ -36,6 +36,8 @@ from indigo_pipeline.config import (
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+SEARCH_INPUT_SELECTOR = "input#search-input, input[data-auto='search-input'], input[type='search']"
+
 
 def login_to_ebsco_if_needed(page) -> None:
     prompt_input = page.locator("input#prompt-input, input[data-auto='prompt-input']").first
@@ -62,9 +64,28 @@ def login_to_ebsco_if_needed(page) -> None:
         pass
 
     try:
-        page.wait_for_selector("input#search-input", timeout=30000)
+        page.wait_for_selector(SEARCH_INPUT_SELECTOR, timeout=30000)
     except PlaywrightTimeoutError:
         print("[EBSCO] Login submitted; search input not visible yet.")
+
+
+def ensure_ebsco_search_ready(page, search_url: str, attempts: int = 2):
+    for attempt in range(1, attempts + 1):
+        login_to_ebsco_if_needed(page)
+        try:
+            search_input = page.locator(SEARCH_INPUT_SELECTOR).first
+            search_input.wait_for(state="visible", timeout=8000)
+            return search_input
+        except PlaywrightTimeoutError:
+            print(f"  [EBSCO] Search input not ready (attempt {attempt}/{attempts}). Reloading search page...")
+            page.goto(search_url, wait_until="domcontentloaded")
+            login_to_ebsco_if_needed(page)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+
+    return None
 
 # ==============================
 # ?뵻 DB ?곌껐 諛??쇰Ц ?곗씠??議고쉶
@@ -187,24 +208,22 @@ def main() -> None:
                         page.goto(EBSCO_URL, wait_until="domcontentloaded")
                         login_to_ebsco_if_needed(page)
                         time.sleep(1.5)
-                
-                    # 寃???낅젰 ?꾨뱶媛 議댁옱?섎뒗吏 ?뺤씤
-                    try:
-                        search_input = page.locator("input#search-input")
-                        if search_input.count() == 0:
-                            print(f"  ??寃???낅젰 ?꾨뱶 ?놁쓬, 寃???섏씠吏濡??대룞 以?..")
-                            page.goto(EBSCO_URL, wait_until="domcontentloaded")
-                            login_to_ebsco_if_needed(page)
-                            time.sleep(1.5)
-                    except:
-                        print(f"  ??寃???낅젰 ?꾨뱶 ?뺤씤 ?ㅽ뙣, 寃???섏씠吏濡??대룞 以?..")
-                        page.goto(EBSCO_URL, wait_until="domcontentloaded")
-                        login_to_ebsco_if_needed(page)
-                        time.sleep(1.5)
+
+                    search_input = ensure_ebsco_search_ready(page, EBSCO_URL)
+                    if search_input is None:
+                        print("  [EBSCO] Search input still unavailable. Marking as failed and continuing.")
+                        results.append({
+                            "EMP_NO": list(emp_no),
+                            "THSS_NM": q,
+                            "has_result": 0,
+                            "ebsco_error": "search_input_unavailable"
+                        })
+                        processed_titles.add(str(q))
+                        continue
 
                     # 寃???낅젰 ?꾨뱶 ?대━????寃??
                     try:
-                        page.click("input#search-input")
+                        search_input.click()
                         time.sleep(0.5)
                         # ?꾩껜 ?좏깮 ????젣
                         page.keyboard.press("Control+A")
@@ -215,9 +234,9 @@ def main() -> None:
                         pass
                 
                     # 寃?됱뼱 ?낅젰
-                    page.fill("input#search-input", q)
+                    search_input.fill(q)
                     time.sleep(0.5)
-                    page.press("input#search-input", "Enter")
+                    search_input.press("Enter")
 
                     # 寃곌낵 濡쒕뵫 ?湲?(??異⑸텇???湲??쒓컙)
                     page.wait_for_load_state("networkidle")
@@ -298,7 +317,7 @@ def main() -> None:
                         no_result_cnt = page.locator('p:has-text("泥좎옄瑜??뺤씤?섍굅??)').count()
                 
                     # ?덊솕硫댁씤吏 ?뺤씤 (寃???낅젰 ?꾨뱶媛 ?녾굅??寃???섏씠吏媛 ?꾨땶 寃쎌슦)
-                    is_home_page = "search" not in page.url or page.locator("input#search-input").count() == 0
+                    is_home_page = "search" not in page.url or page.locator(SEARCH_INPUT_SELECTOR).count() == 0
 
                     # ?붾쾭源??뺣낫 異쒕젰
                     if result_cnt == 0 and no_result_cnt == 0:
@@ -563,7 +582,7 @@ def main() -> None:
 
                     # ?ㅼ쓬 寃??以鍮?(?덊솕硫댁씠 ?꾨땺 ?뚮쭔 ?대━??
                     current_url_before_clear = page.url
-                    if "search" in current_url_before_clear and page.locator("input#search-input").count() > 0:
+                    if "search" in current_url_before_clear and page.locator(SEARCH_INPUT_SELECTOR).count() > 0:
                         try:
                             clear_btn = page.locator('button[aria-label="Clear"]')
                             if clear_btn.count() > 0:
@@ -571,7 +590,7 @@ def main() -> None:
                                 time.sleep(0.5)
                             else:
                                 # Clear 踰꾪듉???놁쑝硫??섎룞?쇰줈 ?대━??
-                                page.click("input#search-input")
+                                page.click(SEARCH_INPUT_SELECTOR)
                                 time.sleep(0.3)
                                 page.keyboard.press("Control+A")
                                 time.sleep(0.2)
@@ -580,7 +599,7 @@ def main() -> None:
                         except Exception as e:
                             # ?대━???ㅽ뙣 ???섎룞?쇰줈 ?대━??
                             try:
-                                page.click("input#search-input")
+                                page.click(SEARCH_INPUT_SELECTOR)
                                 time.sleep(0.3)
                                 page.keyboard.press("Control+A")
                                 time.sleep(0.2)
