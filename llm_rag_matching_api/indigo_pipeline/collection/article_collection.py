@@ -23,8 +23,10 @@ from pathlib import Path
 import sys
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    if not sys.stdout.isatty():
+        sys.stdout.reconfigure(encoding="utf-8")
+    if not sys.stderr.isatty():
+        sys.stderr.reconfigure(encoding="utf-8")
 except AttributeError:
     pass
 

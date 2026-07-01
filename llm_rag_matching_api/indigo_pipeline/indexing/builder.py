@@ -164,6 +164,70 @@ class IndexBuilder:
         )
         return new_docs
 
+    def _existing_extracted_doc_ids(self) -> set[str]:
+        existing_doc_ids: set[str] = set()
+
+        checkpoint_path = config.CHECKPOINT_DIR / f"extraction_{self.doc_type}_checkpoint.json"
+        if checkpoint_path.exists():
+            try:
+                checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                existing_doc_ids.update(as_text(doc_id) for doc_id in checkpoint.get("processed_doc_ids", []))
+                existing_doc_ids.update(
+                    as_text(item.get("source_doc_id"))
+                    for item in checkpoint.get("entities", [])
+                    if isinstance(item, dict)
+                )
+                existing_doc_ids.update(
+                    as_text(item.get("source_doc_id"))
+                    for item in checkpoint.get("relations", [])
+                    if isinstance(item, dict)
+                )
+            except Exception:
+                logger.warning("Failed to read extraction checkpoint: %s", checkpoint_path, exc_info=True)
+
+        artifact_path = self.get_extraction_file()
+        if artifact_path.exists():
+            try:
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                existing_doc_ids.update(
+                    as_text(doc.get("doc_id"))
+                    for doc in artifact.get("docs", [])
+                    if isinstance(doc, dict)
+                )
+                existing_doc_ids.update(
+                    as_text(item.get("source_doc_id"))
+                    for item in artifact.get("entities", [])
+                    if isinstance(item, dict)
+                )
+                existing_doc_ids.update(
+                    as_text(item.get("source_doc_id"))
+                    for item in artifact.get("relations", [])
+                    if isinstance(item, dict)
+                )
+            except Exception:
+                logger.warning("Failed to read extraction artifact: %s", artifact_path, exc_info=True)
+
+        return {doc_id for doc_id in existing_doc_ids if doc_id}
+
+    def filter_unextracted_documents(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        existing_doc_ids = self._existing_extracted_doc_ids()
+        if not existing_doc_ids:
+            return docs
+
+        def already_extracted(doc: dict[str, Any]) -> bool:
+            metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+            candidate_ids = {
+                as_text(doc.get("doc_id")),
+                as_text(metadata.get("legacy_doc_id")),
+            }
+            return any(candidate_id and candidate_id in existing_doc_ids for candidate_id in candidate_ids)
+
+        new_docs = [doc for doc in docs if not already_extracted(doc)]
+        skipped = len(docs) - len(new_docs)
+        if skipped:
+            logger.info("Extraction duplicate check - already extracted: %s, remaining: %s", skipped, len(new_docs))
+        return new_docs
+
     def extract_entities_relations(self, docs: list[dict[str, Any]], batch_size: int = 10) -> tuple[list[dict], list[dict], list[str]]:
         if not docs:
             return [], [], []
@@ -310,9 +374,14 @@ class IndexBuilder:
         if prepared_docs_file:
             docs = json.loads(Path(prepared_docs_file).read_text(encoding="utf-8"))
             self.stats["docs_processed"] = len(docs)
-            self.stats["docs_new"] = len(docs)
+            if not clear:
+                docs = self.filter_new_documents(docs)
+            else:
+                self.stats["docs_new"] = len(docs)
         else:
             docs = self.prepare_documents(data_file=data_file, clear=clear)
+        if not clear:
+            docs = self.filter_unextracted_documents(docs)
         if not docs:
             logger.info("All documents already indexed. Nothing to extract.")
             tracker.end_task(**self.stats)
@@ -439,6 +508,8 @@ class IndexBuilder:
 
             # 3. 이미 인덱싱된 문서 제외
             docs = self.filter_new_documents(docs)
+            if not clear:
+                docs = self.filter_unextracted_documents(docs)
 
             if not docs:
                 logger.info("All documents already indexed. Nothing to do.")

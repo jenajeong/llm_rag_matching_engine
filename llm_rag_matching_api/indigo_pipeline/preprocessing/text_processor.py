@@ -19,11 +19,11 @@ class TextProcessor:
 
     def process(self, doc_type: str, records: list[dict[str, Any]]) -> list[ProcessedDocument]:
         if doc_type == "patent":
-            return self.process_patents(records)
+            return self._dedupe_documents(self.process_patents(records))
         if doc_type == "article":
-            return self.process_articles(records)
+            return self._dedupe_documents(self.process_articles(records))
         if doc_type == "project":
-            return self.process_projects(records)
+            return self._dedupe_documents(self.process_projects(records))
         raise ValueError(f"Unknown doc_type: {doc_type}")
 
     def process_patents(self, records: list[dict[str, Any]]) -> list[ProcessedDocument]:
@@ -51,6 +51,7 @@ class TextProcessor:
                 text = self._join_labeled(("특허명", title), ("요약", abstract))
 
             self._append_if_valid(docs, doc_id, "patent", text, {
+                "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
                 "register_status": clean_ws(get_nested(metadata, "kipris_register_status")),
                 "application_date": clean_ws(get_nested(metadata, "kipris_application_date")),
@@ -80,6 +81,7 @@ class TextProcessor:
                 text = self._join_labeled(("논문명", title), ("초록", abstract))
 
             self._append_if_valid(docs, doc_id, "article", text, {
+                "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
                 "raw_metadata": as_dict(record.get("metadata")),
             })
@@ -107,6 +109,7 @@ class TextProcessor:
                 text = self._join_labeled(("과제명", title), ("내용", content))
 
             self._append_if_valid(docs, doc_id, "project", text, {
+                "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
                 "raw_metadata": as_dict(record.get("metadata")),
             })
@@ -131,12 +134,31 @@ class TextProcessor:
         self.stats["processed"] += 1
 
     def _doc_id(self, record: dict[str, Any], doc_type: str) -> str:
-        for key in ("no", "id", "doc_id", "source_id", "SQ", "APPL_NO"):
+        for key in ("doc_id", "source_id", "SQ", "APPL_NO"):
             value = record.get(key)
             if not is_nullish(value):
                 return as_text(value)
-        seed = "|".join([doc_type, self._title(record), self._body(record)[:200]])
+        professor = as_dict(record.get("professor_info"))
+        metadata = as_dict(record.get("metadata"))
+        seed = "|".join([
+            doc_type,
+            self._title(record),
+            as_text(record.get("year") or metadata.get("year") or metadata.get("YY")),
+            as_text(professor.get("SQ") or professor.get("EMP_NO")),
+            self._body(record)[:300],
+        ])
         return f"{doc_type}_{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
+
+    def _dedupe_documents(self, docs: list[ProcessedDocument]) -> list[ProcessedDocument]:
+        unique_docs: list[ProcessedDocument] = []
+        seen_doc_ids: set[str] = set()
+        for doc in docs:
+            if doc.doc_id in seen_doc_ids:
+                self.stats["skipped_duplicate_doc_id"] += 1
+                continue
+            seen_doc_ids.add(doc.doc_id)
+            unique_docs.append(doc)
+        return unique_docs
 
     def _title(self, record: dict[str, Any]) -> str:
         for key in ("title", "THSS_NM", "INVENTION_TITLE", "KOR_INVENTION_TITLE", "SBJT_NM", "name"):

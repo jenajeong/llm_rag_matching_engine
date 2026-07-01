@@ -51,7 +51,27 @@ class KIPRISCollector:
         result = load_patent_register_ids(conn, limit=limit, verbose=verbose)
         for item in result:
             item["ptnt_rgstr_id_clean"] = normalize_register_id(item.get("ptnt_rgstr_id"))
-        return [item for item in result if item.get("ptnt_rgstr_id_clean")]
+
+        unique_items = []
+        seen_register_ids = set()
+        duplicate_count = 0
+
+        for item in result:
+            clean_id = item.get("ptnt_rgstr_id_clean")
+            if not clean_id:
+                continue
+
+            if clean_id in seen_register_ids:
+                duplicate_count += 1
+                continue
+
+            seen_register_ids.add(clean_id)
+            unique_items.append(item)
+
+        if duplicate_count:
+            print(f"[INFO] 중복 등록번호 {duplicate_count:,}건 제외. KIPRIS 조회 대상 {len(unique_items):,}건")
+
+        return unique_items
 
     def fetch_patent_data(self, register_id: str, mbr_sn: str = "", professor_info: Dict = None) -> Optional[Dict]:
 
@@ -181,10 +201,17 @@ class KIPRISCollector:
             print("[2?④퀎: KIPRIS API ?곗씠???섏쭛]")
             print("=" * 70)
 
+            processed_this_run = set()
+
             for idx, register_info in enumerate(register_id_list, 1):
 
                 original_register_id = register_info["ptnt_rgstr_id"]
                 clean_register_id = register_info["ptnt_rgstr_id_clean"]
+
+                if clean_register_id in processed_this_run:
+                    print(f"[SKIP] 이번 실행에서 이미 처리한 등록번호: {clean_register_id}")
+                    continue
+                processed_this_run.add(clean_register_id)
 
                 # 湲곗〈???섏쭛???깅줉踰덊샇??skip
                 if clean_register_id in existing_complete_ids:
