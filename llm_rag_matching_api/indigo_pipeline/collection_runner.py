@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -171,6 +172,42 @@ def resolve_steps(args: argparse.Namespace) -> list[PipelineStep]:
     return [STEPS[name] for name in selected_names if name not in skip_names]
 
 
+def _pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _lock_is_stale(lock_file: Path, stale_lock_seconds: int) -> bool:
+    try:
+        payload = json.loads(lock_file.read_text(encoding="utf-8"))
+        hostname = str(payload.get("hostname") or "")
+        current_hostname = socket.gethostname()
+        if hostname and hostname != current_hostname:
+            print(f"Lock belongs to another container. Treating as stale: hostname={hostname}, current={current_hostname}, lock={lock_file}")
+            return True
+
+        pid = int(payload.get("pid") or 0)
+        if pid and not _pid_is_running(pid):
+            print(f"Lock PID is not running. Treating as stale: pid={pid}, lock={lock_file}")
+            return True
+    except Exception:
+        pass
+
+    try:
+        return time.time() - lock_file.stat().st_mtime > stale_lock_seconds
+    except OSError:
+        return False
+
+
 @contextmanager
 def runner_lock(args: argparse.Namespace):
     lock_file = Path(args.lock_file)
@@ -183,6 +220,7 @@ def runner_lock(args: argparse.Namespace):
                 json.dump(
                     {
                         "pid": os.getpid(),
+                        "hostname": socket.gethostname(),
                         "started_at": datetime.now().isoformat(),
                         "command": sys.argv,
                     },
@@ -192,11 +230,7 @@ def runner_lock(args: argparse.Namespace):
                 )
             break
         except FileExistsError:
-            stale = False
-            try:
-                stale = time.time() - lock_file.stat().st_mtime > args.stale_lock_seconds
-            except OSError:
-                stale = False
+            stale = _lock_is_stale(lock_file, args.stale_lock_seconds)
             if stale:
                 print(f"Removing stale lock: {lock_file}")
                 lock_file.unlink(missing_ok=True)
