@@ -3,12 +3,13 @@ import re
 from collections import Counter
 from typing import Any
 
+from .. import config
 from ..core.safe import as_dict, as_text, clean_ws, get_nested, is_nullish
 from ..core.types import ProcessedDocument
 
 
 class TextProcessor:
-    MIN_TEXT_LENGTH = 10  # title만 있는 경우를 위해 기존 100 → 10으로 완화
+    MIN_TEXT_LENGTH = config.MIN_TEXT_LENGTH
 
     def __init__(self, min_text_length: int | None = None):
         self.min_text_length = min_text_length or self.MIN_TEXT_LENGTH
