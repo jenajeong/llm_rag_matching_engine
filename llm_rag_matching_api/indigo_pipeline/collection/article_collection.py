@@ -245,7 +245,7 @@ def main() -> None:
                     # 寃??寃곌낵 ?붿냼媛 ?섑????뚭퉴吏 紐낆떆?곸쑝濡??湲??쒕룄 (理쒕? 5珥?
                     try:
                         # 寃??寃곌낵 ?먮뒗 "寃곌낵 ?놁쓬" 硫붿떆吏媛 ?섑????뚭퉴吏 ?湲?
-                        page.wait_for_selector('h3[data-auto="result-item-title"], p:has-text("泥좎옄瑜??뺤씤?섍굅??), text=/寃??寃곌낵.*嫄?', timeout=5000)
+                        page.wait_for_selector('h3[data-auto="result-item-title"]', timeout=5000)
                     except:
                         # ?붿냼媛 ?섑??섏? ?딆븘??怨꾩냽 吏꾪뻾 (?대? networkidle濡?異⑸텇???湲고뻽?쇰?濡?
                         pass
@@ -312,9 +312,7 @@ def main() -> None:
                         result_cnt = max(result_cnt, 1)
                 
                     # 寃??寃곌낵 ?놁쓬 ?뺤씤: ?띿뒪??湲곕컲?쇰줈 ?뺤씤
-                    no_result_cnt = page.locator('text=/泥좎옄瑜??뺤씤?섍굅??*寃?됲븯??떆??').count()
-                    if no_result_cnt == 0:
-                        no_result_cnt = page.locator('p:has-text("泥좎옄瑜??뺤씤?섍굅??)').count()
+                    no_result_cnt = page.locator('text=/No results|결과 없음|검색 결과 없음|철자를 확인/i').count()
                 
                     # ?덊솕硫댁씤吏 ?뺤씤 (寃???낅젰 ?꾨뱶媛 ?녾굅??寃???섏씠吏媛 ?꾨땶 寃쎌슦)
                     is_home_page = "search" not in page.url or page.locator(SEARCH_INPUT_SELECTOR).count() == 0
