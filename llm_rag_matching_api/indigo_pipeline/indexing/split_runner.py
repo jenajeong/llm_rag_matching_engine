@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -117,6 +118,12 @@ def _pid_is_running(pid: int) -> bool:
 def _lock_is_stale(lock_file: Path, stale_lock_seconds: int) -> bool:
     try:
         payload = _read_json(lock_file)
+        hostname = str(payload.get("hostname") or "")
+        current_hostname = socket.gethostname()
+        if hostname and hostname != current_hostname:
+            print(f"Lock belongs to another container. Treating as stale: hostname={hostname}, current={current_hostname}, lock={lock_file}")
+            return True
+
         pid = int(payload.get("pid") or 0)
         if pid and not _pid_is_running(pid):
             print(f"Lock PID is not running. Treating as stale: pid={pid}, lock={lock_file}")
@@ -154,6 +161,7 @@ def _runner_lock(args: argparse.Namespace):
                 json.dump(
                     {
                         "pid": os.getpid(),
+                        "hostname": socket.gethostname(),
                         "started_at": datetime.now().isoformat(),
                         "command": sys.argv,
                     },
