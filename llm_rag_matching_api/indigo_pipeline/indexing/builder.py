@@ -164,24 +164,49 @@ class IndexBuilder:
         )
         return new_docs
 
-    def _existing_extracted_doc_ids(self) -> set[str]:
+    def _doc_candidate_ids(self, doc: dict[str, Any]) -> set[str]:
+        metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        return {
+            candidate_id
+            for candidate_id in {
+                as_text(doc.get("doc_id")),
+                as_text(metadata.get("legacy_doc_id")),
+            }
+            if candidate_id
+        }
+
+    def _existing_extraction_payload(self) -> tuple[set[str], dict[str, list[dict]], dict[str, list[dict]]]:
         existing_doc_ids: set[str] = set()
+        entities_by_doc: dict[str, list[dict]] = {}
+        relations_by_doc: dict[str, list[dict]] = {}
+
+        def ingest(payload: dict[str, Any]) -> None:
+            existing_doc_ids.update(as_text(doc_id) for doc_id in payload.get("processed_doc_ids", []))
+            for doc in payload.get("docs", []):
+                if isinstance(doc, dict):
+                    existing_doc_ids.add(as_text(doc.get("doc_id")))
+            for entity in payload.get("entities", []):
+                if not isinstance(entity, dict):
+                    continue
+                source_doc_id = as_text(entity.get("source_doc_id"))
+                if not source_doc_id:
+                    continue
+                existing_doc_ids.add(source_doc_id)
+                entities_by_doc.setdefault(source_doc_id, []).append(entity)
+            for relation in payload.get("relations", []):
+                if not isinstance(relation, dict):
+                    continue
+                source_doc_id = as_text(relation.get("source_doc_id"))
+                if not source_doc_id:
+                    continue
+                existing_doc_ids.add(source_doc_id)
+                relations_by_doc.setdefault(source_doc_id, []).append(relation)
 
         checkpoint_path = config.CHECKPOINT_DIR / f"extraction_{self.doc_type}_checkpoint.json"
         if checkpoint_path.exists():
             try:
                 checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-                existing_doc_ids.update(as_text(doc_id) for doc_id in checkpoint.get("processed_doc_ids", []))
-                existing_doc_ids.update(
-                    as_text(item.get("source_doc_id"))
-                    for item in checkpoint.get("entities", [])
-                    if isinstance(item, dict)
-                )
-                existing_doc_ids.update(
-                    as_text(item.get("source_doc_id"))
-                    for item in checkpoint.get("relations", [])
-                    if isinstance(item, dict)
-                )
+                ingest(checkpoint)
             except Exception:
                 logger.warning("Failed to read extraction checkpoint: %s", checkpoint_path, exc_info=True)
 
@@ -189,25 +214,15 @@ class IndexBuilder:
         if artifact_path.exists():
             try:
                 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-                existing_doc_ids.update(
-                    as_text(doc.get("doc_id"))
-                    for doc in artifact.get("docs", [])
-                    if isinstance(doc, dict)
-                )
-                existing_doc_ids.update(
-                    as_text(item.get("source_doc_id"))
-                    for item in artifact.get("entities", [])
-                    if isinstance(item, dict)
-                )
-                existing_doc_ids.update(
-                    as_text(item.get("source_doc_id"))
-                    for item in artifact.get("relations", [])
-                    if isinstance(item, dict)
-                )
+                ingest(artifact)
             except Exception:
                 logger.warning("Failed to read extraction artifact: %s", artifact_path, exc_info=True)
 
-        return {doc_id for doc_id in existing_doc_ids if doc_id}
+        return {doc_id for doc_id in existing_doc_ids if doc_id}, entities_by_doc, relations_by_doc
+
+    def _existing_extracted_doc_ids(self) -> set[str]:
+        existing_doc_ids, _, _ = self._existing_extraction_payload()
+        return existing_doc_ids
 
     def filter_unextracted_documents(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         existing_doc_ids = self._existing_extracted_doc_ids()
@@ -215,18 +230,50 @@ class IndexBuilder:
             return docs
 
         def already_extracted(doc: dict[str, Any]) -> bool:
-            metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
-            candidate_ids = {
-                as_text(doc.get("doc_id")),
-                as_text(metadata.get("legacy_doc_id")),
-            }
-            return any(candidate_id and candidate_id in existing_doc_ids for candidate_id in candidate_ids)
+            return any(candidate_id in existing_doc_ids for candidate_id in self._doc_candidate_ids(doc))
 
         new_docs = [doc for doc in docs if not already_extracted(doc)]
         skipped = len(docs) - len(new_docs)
         if skipped:
             logger.info("Extraction duplicate check - already extracted: %s, remaining: %s", skipped, len(new_docs))
         return new_docs
+
+    def split_existing_extractions(self, docs: list[dict[str, Any]]) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+        existing_doc_ids, entities_by_doc, relations_by_doc = self._existing_extraction_payload()
+        if not existing_doc_ids:
+            return docs, [], [], []
+
+        docs_to_extract: list[dict] = []
+        reusable_docs: list[dict] = []
+        reusable_entities: list[dict] = []
+        reusable_relations: list[dict] = []
+
+        for doc in docs:
+            current_doc_id = as_text(doc.get("doc_id"))
+            matched_doc_id = next((candidate for candidate in self._doc_candidate_ids(doc) if candidate in existing_doc_ids), "")
+            if not matched_doc_id:
+                docs_to_extract.append(doc)
+                continue
+
+            reusable_docs.append(doc)
+            for entity in entities_by_doc.get(matched_doc_id, []):
+                item = dict(entity)
+                item["source_doc_id"] = current_doc_id
+                reusable_entities.append(item)
+            for relation in relations_by_doc.get(matched_doc_id, []):
+                item = dict(relation)
+                item["source_doc_id"] = current_doc_id
+                reusable_relations.append(item)
+
+        if reusable_docs:
+            logger.info(
+                "Reusing existing extraction payload: docs=%s, entities=%s, relations=%s, remaining=%s",
+                len(reusable_docs),
+                len(reusable_entities),
+                len(reusable_relations),
+                len(docs_to_extract),
+            )
+        return docs_to_extract, reusable_docs, reusable_entities, reusable_relations
 
     def extract_entities_relations(self, docs: list[dict[str, Any]], batch_size: int = 10) -> tuple[list[dict], list[dict], list[str]]:
         if not docs:
@@ -380,9 +427,30 @@ class IndexBuilder:
                 self.stats["docs_new"] = len(docs)
         else:
             docs = self.prepare_documents(data_file=data_file, clear=clear)
+        reusable_docs: list[dict] = []
+        reusable_entities: list[dict] = []
+        reusable_relations: list[dict] = []
         if not clear:
-            docs = self.filter_unextracted_documents(docs)
+            docs, reusable_docs, reusable_entities, reusable_relations = self.split_existing_extractions(docs)
         if not docs:
+            if reusable_docs or reusable_entities or reusable_relations:
+                logger.info("All documents already extracted. Reusing existing extraction payload.")
+                self.stats["entities_extracted"] = len(reusable_entities)
+                self.stats["relations_extracted"] = len(reusable_relations)
+                self.stats["entities_after_merge"] = len(reusable_entities)
+                self.stats["relations_after_merge"] = len(reusable_relations)
+                artifact_file = self._save_extraction_artifact(
+                    output_file,
+                    reusable_docs,
+                    reusable_entities,
+                    reusable_relations,
+                    [],
+                )
+                cost_result = tracker.end_task(**self.stats)
+                if cost_result:
+                    logger.info("Estimated extraction API cost: $%.6f", cost_result.get("total_cost_usd", 0.0))
+                return {"artifact_file": str(artifact_file), **self.stats}
+
             logger.info("All documents already indexed. Nothing to extract.")
             tracker.end_task(**self.stats)
             artifact_file = self._save_extraction_artifact(output_file, docs, [], [], [])
@@ -390,6 +458,12 @@ class IndexBuilder:
 
         entities, relations, failed_doc_ids = self.extract_entities_relations(docs, batch_size=batch_size)
         self._save_failed_docs(failed_doc_ids, len(docs))
+
+        if reusable_entities:
+            entities = [*reusable_entities, *entities]
+        if reusable_relations:
+            relations = [*reusable_relations, *relations]
+        artifact_docs = [*reusable_docs, *docs]
 
         if entities:
             entities = merge_duplicate_entities(entities)
@@ -399,7 +473,9 @@ class IndexBuilder:
         else:
             logger.warning("No entities extracted. Chunks can still be stored in store phase.")
 
-        artifact_file = self._save_extraction_artifact(output_file, docs, entities, relations, failed_doc_ids)
+        self.stats["entities_extracted"] = len(entities)
+        self.stats["relations_extracted"] = len(relations)
+        artifact_file = self._save_extraction_artifact(output_file, artifact_docs, entities, relations, failed_doc_ids)
         cost_result = tracker.end_task(**self.stats)
         if cost_result:
             logger.info("Estimated extraction API cost: $%.6f", cost_result.get("total_cost_usd", 0.0))
