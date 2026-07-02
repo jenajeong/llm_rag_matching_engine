@@ -3,12 +3,46 @@ from pathlib import Path
 from typing import List, Dict, Any
 import sys
 from datetime import datetime
+import hashlib
+import re
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR.parent))
 
 from indigo_pipeline.config import PATENT_DATA_FILE, DATA_TRAIN_PATENT_FILE
 from indigo_pipeline.filtering.text_preprocessing import preprocess_text
+
+
+def _norm_id(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"[\s-]+", "", str(value).strip())
+
+
+def _professor_key(professor_info: Any) -> str:
+    if isinstance(professor_info, dict):
+        for key in ("SQ", "EMP_NO", "RECHER_REG_NO", "EMAIL", "NM"):
+            value = professor_info.get(key)
+            if value:
+                return _norm_id(value)
+        return json.dumps(professor_info, sort_keys=True, ensure_ascii=False)
+    return "" if professor_info is None else _norm_id(professor_info)
+
+
+def stable_patent_id(patent: Dict, title: Any) -> str:
+    work_id = ""
+    for key in ("ptnt_rgstr_id", "kipris_register_number", "kipris_application_number", "tech_aplct_id"):
+        value = _norm_id(patent.get(key))
+        if value:
+            work_id = value
+            break
+
+    if not work_id:
+        work_id = re.sub(r"\s+", " ", "" if title is None else str(title)).strip().lower()
+
+    professor = _professor_key(patent.get("professor_info"))
+    seed = f"{work_id}|{professor}"
+    return f"patent_{hashlib.md5(seed.encode('utf-8')).hexdigest()[:12]}"
 
 
 def load_patent_json(input_file: str = None) -> List[Dict]:
@@ -46,17 +80,16 @@ def has_value(value: Any) -> bool:
     return True
 
 
-def deduplicate_by_title_and_professor(data):
+def deduplicate_by_stable_id(data):
     unique = {}
+    dup_count = 0
     for item in data:
-        title = item.get("title")
-        prof = item.get("professor_info")
-        title_key = title.strip() if isinstance(title, str) else str(title)
-        prof_key = json.dumps(prof, sort_keys=True) if prof else "None"
-        key = (title_key, prof_key)
+        key = item.get("no")
         if key not in unique:
             unique[key] = item
-    return list(unique.values())
+        else:
+            dup_count += 1
+    return list(unique.values()), dup_count
 
 
 def filter_patent_data(patents: List[Dict]) -> tuple:
@@ -112,7 +145,7 @@ def filter_patent_data(patents: List[Dict]) -> tuple:
         
         filtered_patent = {
             'data_type': 'patent',
-            'no': len(filtered_patents) + 1,
+            'no': stable_patent_id(patent, title),
             'text': preprocessed_text,
             'title': title,
             'year': None,
@@ -128,10 +161,11 @@ def filter_patent_data(patents: List[Dict]) -> tuple:
         
         filtered_patents.append(filtered_patent)
     
-    filtered_patents = deduplicate_by_title_and_professor(filtered_patents)
+    filtered_patents, dedup_removed = deduplicate_by_stable_id(filtered_patents)
     
     print(f"\n[완료] 데이터 필터링 완료")
     print(f"   - 필터링된 특허: {len(filtered_patents):,}개")
+    print(f"   - 중복 제거: {dedup_removed:,}개")
     print(f"   - 5000자 초과 제거: {filter_stats['text_over_5000_filtered']:,}개")
 
     if over_5000_samples:

@@ -3,10 +3,43 @@ from pathlib import Path
 from typing import List, Dict, Any
 import sys
 import re
+import hashlib
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from indigo_pipeline.config import PROJECT_DATA_FILE, DATA_TRAIN_PROJECT_FILE
 from indigo_pipeline.filtering.text_preprocessing import preprocess_text
+
+
+def _norm_id(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", "", str(value).strip())
+
+
+def _professor_key(professor_info: Any) -> str:
+    if isinstance(professor_info, dict):
+        for key in ("SQ", "EMP_NO", "RECHER_REG_NO", "EMAIL", "NM"):
+            value = professor_info.get(key)
+            if value:
+                return _norm_id(value)
+        return json.dumps(professor_info, sort_keys=True, ensure_ascii=False)
+    return "" if professor_info is None else _norm_id(professor_info)
+
+
+def stable_project_id(project: Dict) -> str:
+    work_id = ""
+    for key in ("PRJ_NO", "PRJ_ID", "PRJ_CD"):
+        value = _norm_id(project.get(key))
+        if value:
+            work_id = value
+            break
+
+    if not work_id:
+        work_id = re.sub(r"\s+", " ", str(project.get("PRJ_NM") or "")).strip().lower()
+
+    professor = _professor_key(project.get("professor_info") or project.get("PRJ_RSPR_EMP_ID"))
+    seed = f"{work_id}|{professor}"
+    return f"project_{hashlib.md5(seed.encode('utf-8')).hexdigest()[:12]}"
 
 
 def load_project_json(input_file: str = None) -> List[Dict]:
@@ -67,18 +100,12 @@ def parse_year_from_project(project: Dict) -> Any:
     return None
 
 
-def deduplicate_by_title_and_professor(data):
+def deduplicate_by_stable_id(data):
     unique = {}
     dup_count = 0
 
     for item in data:
-        title = item.get("title")
-        prof = item.get("professor_info")
-
-        title_key = title.strip() if isinstance(title, str) else str(title)
-        prof_key = json.dumps(prof, sort_keys=True) if prof else "None"
-
-        key = (title_key, prof_key)
+        key = item.get("no")
 
         if key not in unique:
             unique[key] = item
@@ -134,7 +161,7 @@ def filter_project_data(projects: List[Dict]) -> tuple:
         
         filtered_project = {
             'data_type': 'project',
-            'no': len(filtered_projects) + 1,
+            'no': stable_project_id(project),
             'text': preprocessed_text,
             'title': project.get('PRJ_NM'),
             'year': year,
@@ -154,7 +181,7 @@ def filter_project_data(projects: List[Dict]) -> tuple:
         filtered_projects.append(filtered_project)
     
     before_dedup = len(filtered_projects)
-    filtered_projects, dedup_removed = deduplicate_by_title_and_professor(filtered_projects)
+    filtered_projects, dedup_removed = deduplicate_by_stable_id(filtered_projects)
     after_dedup = len(filtered_projects)
 
     filter_stats['dedup_removed'] = dedup_removed

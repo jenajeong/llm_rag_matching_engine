@@ -1,5 +1,7 @@
 import json
 import ast
+import hashlib
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import sys
@@ -10,6 +12,35 @@ from indigo_pipeline.filtering.text_preprocessing import preprocess_text
 from langdetect import detect, LangDetectException, DetectorFactory
 
 DetectorFactory.seed = 0
+
+
+def _professor_key(professor_info: Any) -> str:
+    if isinstance(professor_info, dict):
+        for key in ("SQ", "EMP_NO", "RECHER_REG_NO", "EMAIL", "NM"):
+            value = professor_info.get(key)
+            if value:
+                return re.sub(r"\s+", "", str(value).strip())
+        return json.dumps(professor_info, sort_keys=True, ensure_ascii=False)
+    return "" if professor_info is None else re.sub(r"\s+", "", str(professor_info).strip())
+
+
+def stable_article_id(title: Any, professor_info: Any) -> str:
+    normalized = re.sub(r"\s+", " ", "" if title is None else str(title)).strip().lower()
+    professor = _professor_key(professor_info)
+    seed = f"{normalized}|{professor}"
+    return f"article_{hashlib.md5(seed.encode('utf-8')).hexdigest()[:12]}"
+
+
+def deduplicate_by_article_id(data: List[Dict]) -> tuple[List[Dict], int]:
+    unique = {}
+    duplicate_count = 0
+    for item in data:
+        article_id = item.get("no")
+        if article_id not in unique:
+            unique[article_id] = item
+        else:
+            duplicate_count += 1
+    return list(unique.values()), duplicate_count
 
 
 def load_article_json(input_file: str = None) -> List[Dict]:
@@ -253,7 +284,7 @@ def filter_article_data(articles: List[Dict]) -> tuple:
         
         filtered_article = {
             'data_type': 'article',
-            'no': len(filtered_articles) + 1,
+            'no': stable_article_id(article.get('THSS_NM'), article.get('professor_info')),
             'text': preprocessed_text,
             'title': article.get('THSS_NM'),
             'year': year,
@@ -263,11 +294,14 @@ def filter_article_data(articles: List[Dict]) -> tuple:
         
         filtered_articles.append(filtered_article)
 
+    filtered_articles, dedup_removed = deduplicate_by_article_id(filtered_articles)
+
     print("\n===== FILTER LOG =====")
     print("year_filtered:", log_counts['year_fail'])
     print("metadata_filtered:", log_counts['metadata_fail'])
     print("text_too_long:", log_counts['too_long'])
     print("text_null:", log_counts['null_text'])
+    print("dedup_removed:", dedup_removed)
     print("success:", log_counts['success'])
     print("======================\n")
     
