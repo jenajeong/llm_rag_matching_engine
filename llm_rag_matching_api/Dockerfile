@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y software-properties-common \
     docker.io \ 
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
 RUN pip install --upgrade pip && \

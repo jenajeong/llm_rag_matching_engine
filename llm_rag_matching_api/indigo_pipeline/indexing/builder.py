@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import pickle
@@ -171,20 +172,40 @@ class IndexBuilder:
             for candidate_id in {
                 as_text(doc.get("doc_id")),
                 as_text(metadata.get("legacy_doc_id")),
+                *self._doc_content_aliases(doc),
             }
             if candidate_id
         }
 
-    def _existing_extraction_payload(self) -> tuple[set[str], dict[str, list[dict]], dict[str, list[dict]]]:
+    def _doc_content_aliases(self, doc: dict[str, Any]) -> set[str]:
+        text = as_text(doc.get("text")).strip()
+        if not text:
+            return set()
+        normalized_text = " ".join(text.split())
+        aliases = {f"text:{hashlib.sha1(normalized_text.encode('utf-8')).hexdigest()}"}
+
+        metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        title = as_text(metadata.get("title")).strip().lower()
+        if title:
+            aliases.add(f"title_text:{hashlib.sha1(f'{title}|{normalized_text}'.encode('utf-8')).hexdigest()}")
+        return aliases
+
+    def _existing_extraction_payload(self) -> tuple[set[str], dict[str, list[dict]], dict[str, list[dict]], dict[str, str]]:
         existing_doc_ids: set[str] = set()
         entities_by_doc: dict[str, list[dict]] = {}
         relations_by_doc: dict[str, list[dict]] = {}
+        alias_to_doc_id: dict[str, str] = {}
 
         def ingest(payload: dict[str, Any]) -> None:
             existing_doc_ids.update(as_text(doc_id) for doc_id in payload.get("processed_doc_ids", []))
             for doc in payload.get("docs", []):
                 if isinstance(doc, dict):
-                    existing_doc_ids.add(as_text(doc.get("doc_id")))
+                    doc_id = as_text(doc.get("doc_id"))
+                    if not doc_id:
+                        continue
+                    for candidate_id in self._doc_candidate_ids(doc):
+                        existing_doc_ids.add(candidate_id)
+                        alias_to_doc_id[candidate_id] = doc_id
             for entity in payload.get("entities", []):
                 if not isinstance(entity, dict):
                     continue
@@ -192,6 +213,7 @@ class IndexBuilder:
                 if not source_doc_id:
                     continue
                 existing_doc_ids.add(source_doc_id)
+                alias_to_doc_id.setdefault(source_doc_id, source_doc_id)
                 entities_by_doc.setdefault(source_doc_id, []).append(entity)
             for relation in payload.get("relations", []):
                 if not isinstance(relation, dict):
@@ -200,6 +222,7 @@ class IndexBuilder:
                 if not source_doc_id:
                     continue
                 existing_doc_ids.add(source_doc_id)
+                alias_to_doc_id.setdefault(source_doc_id, source_doc_id)
                 relations_by_doc.setdefault(source_doc_id, []).append(relation)
 
         checkpoint_path = config.CHECKPOINT_DIR / f"extraction_{self.doc_type}_checkpoint.json"
@@ -218,10 +241,20 @@ class IndexBuilder:
             except Exception:
                 logger.warning("Failed to read extraction artifact: %s", artifact_path, exc_info=True)
 
-        return {doc_id for doc_id in existing_doc_ids if doc_id}, entities_by_doc, relations_by_doc
+        split_artifact_root = config.CHECKPOINT_DIR / "split_index_runs"
+        if split_artifact_root.exists():
+            for split_artifact_path in split_artifact_root.glob(f"*/{self.doc_type}/artifacts/*.json"):
+                try:
+                    artifact = json.loads(split_artifact_path.read_text(encoding="utf-8"))
+                    if artifact.get("doc_type") == self.doc_type:
+                        ingest(artifact)
+                except Exception:
+                    logger.warning("Failed to read split extraction artifact: %s", split_artifact_path, exc_info=True)
+
+        return {doc_id for doc_id in existing_doc_ids if doc_id}, entities_by_doc, relations_by_doc, alias_to_doc_id
 
     def _existing_extracted_doc_ids(self) -> set[str]:
-        existing_doc_ids, _, _ = self._existing_extraction_payload()
+        existing_doc_ids, _, _, _ = self._existing_extraction_payload()
         return existing_doc_ids
 
     def filter_unextracted_documents(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -239,7 +272,7 @@ class IndexBuilder:
         return new_docs
 
     def split_existing_extractions(self, docs: list[dict[str, Any]]) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-        existing_doc_ids, entities_by_doc, relations_by_doc = self._existing_extraction_payload()
+        existing_doc_ids, entities_by_doc, relations_by_doc, alias_to_doc_id = self._existing_extraction_payload()
         if not existing_doc_ids:
             return docs, [], [], []
 
@@ -250,11 +283,12 @@ class IndexBuilder:
 
         for doc in docs:
             current_doc_id = as_text(doc.get("doc_id"))
-            matched_doc_id = next((candidate for candidate in self._doc_candidate_ids(doc) if candidate in existing_doc_ids), "")
-            if not matched_doc_id:
+            matched_alias = next((candidate for candidate in self._doc_candidate_ids(doc) if candidate in existing_doc_ids), "")
+            if not matched_alias:
                 docs_to_extract.append(doc)
                 continue
 
+            matched_doc_id = alias_to_doc_id.get(matched_alias, matched_alias)
             reusable_docs.append(doc)
             for entity in entities_by_doc.get(matched_doc_id, []):
                 item = dict(entity)
