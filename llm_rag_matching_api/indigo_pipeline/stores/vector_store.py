@@ -147,7 +147,8 @@ class ChromaVectorStore:
         for i in range(0, len(ids), CHROMADB_MAX_BATCH_SIZE):
             batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, len(ids))
             batch_ids = ids[i:batch_end]
-            existing = set(collection.get(ids=batch_ids).get("ids", []) or [])
+            unique_batch_ids = list(dict.fromkeys(batch_ids))
+            existing = set(collection.get(ids=unique_batch_ids).get("ids", []) or [])
 
             seen_in_batch: set[str] = set()
             new_indexes = []
