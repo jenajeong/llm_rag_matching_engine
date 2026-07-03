@@ -37,20 +37,19 @@ class TextProcessor:
             title = self._title(record)
             abstract = self._body(record)
 
-            # title도 없고 text도 없으면 스킵
             if not title and not abstract:
                 self.stats["skipped_empty_text"] += 1
                 continue
-
-            # text가 없으면 title만으로 구성
-            if not abstract:
-                text = self._join_labeled(("특허명", title))
+            if self._is_body_contentless(abstract, title, doc_id):
                 self.stats["title_only"] += 1
-            elif self._starts_with_title(abstract, title):
-                text = f"[요약] {abstract}"
-            else:
-                text = self._join_labeled(("특허명", title), ("요약", abstract))
+                self.stats["skipped_title_only"] += 1
+                continue
 
+            text = (
+                self._join_labeled(("summary", abstract))
+                if self._starts_with_title(abstract, title)
+                else self._join_labeled(("patent_title", title), ("summary", abstract))
+            )
             self._append_if_valid(docs, doc_id, "patent", text, {
                 "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
@@ -69,18 +68,15 @@ class TextProcessor:
             title = self._title(record)
             abstract = self._body(record)
 
-            # title도 없고 text도 없으면 스킵
             if not title and not abstract:
                 self.stats["skipped_empty_text"] += 1
                 continue
-
-            # text가 없으면 title만으로 구성
-            if not abstract:
-                text = self._join_labeled(("논문명", title))
+            if self._is_body_contentless(abstract, title, doc_id):
                 self.stats["title_only"] += 1
-            else:
-                text = self._join_labeled(("논문명", title), ("초록", abstract))
+                self.stats["skipped_title_only"] += 1
+                continue
 
+            text = self._join_labeled(("article_title", title), ("abstract", abstract))
             self._append_if_valid(docs, doc_id, "article", text, {
                 "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
@@ -97,18 +93,15 @@ class TextProcessor:
             title = self._title(record)
             content = self._body(record)
 
-            # title도 없고 text도 없으면 스킵
             if not title and not content:
                 self.stats["skipped_empty_text"] += 1
                 continue
-
-            # text가 없으면 title만으로 구성
-            if not content:
-                text = self._join_labeled(("과제명", title))
+            if self._is_body_contentless(content, title, doc_id):
                 self.stats["title_only"] += 1
-            else:
-                text = self._join_labeled(("과제명", title), ("내용", content))
+                self.stats["skipped_title_only"] += 1
+                continue
 
+            text = self._join_labeled(("project_title", title), ("content", content))
             self._append_if_valid(docs, doc_id, "project", text, {
                 "legacy_doc_id": as_text(record.get("no")),
                 "title": title,
@@ -173,19 +166,33 @@ class TextProcessor:
             value = record.get(key)
             if not is_nullish(value):
                 return clean_ws(value)
-        pieces = []
-        for value in record.values():
-            if isinstance(value, str) and len(value.strip()) >= 20:
-                pieces.append(value)
-        return clean_ws(" ".join(pieces))
+        return ""
 
     def _join_labeled(self, *pairs: tuple[str, str]) -> str:
         return "\n".join(f"[{label}] {value}" for label, value in pairs if clean_ws(value))
 
+    def _is_body_contentless(self, body: str, title: str, doc_id: str) -> bool:
+        body = clean_ws(body)
+        if not body:
+            return True
+
+        body_norm = self._norm_for_compare(body)
+        title_norm = self._norm_for_compare(title)
+        doc_id_norm = self._norm_for_compare(doc_id)
+        if not body_norm:
+            return True
+
+        stripped = body_norm
+        if doc_id_norm and stripped.startswith(doc_id_norm):
+            stripped = stripped[len(doc_id_norm):]
+        return stripped in {"", title_norm}
+
     def _starts_with_title(self, body: str, title: str) -> bool:
         if not title:
             return False
-        return self._norm_for_compare(body).startswith(self._norm_for_compare(title))
+        body_norm = self._norm_for_compare(body)
+        title_norm = self._norm_for_compare(title)
+        return bool(title_norm and body_norm.startswith(title_norm) and body_norm != title_norm)
 
     def _norm_for_compare(self, value: str) -> str:
         value = re.sub(r"\s+", "", as_text(value))
