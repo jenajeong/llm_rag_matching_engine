@@ -436,8 +436,7 @@ class IndexBuilder:
         raw_data = self.load_data(data_file)
         docs = self.process_documents(raw_data)
         if clear:
-            self.stats["docs_new"] = len(docs)
-            return docs
+            logger.warning("Append-only extraction mode ignores --clear; already indexed documents will be skipped.")
         return self.filter_new_documents(docs)
 
     def run_extract(
@@ -455,17 +454,15 @@ class IndexBuilder:
         if prepared_docs_file:
             docs = json.loads(Path(prepared_docs_file).read_text(encoding="utf-8"))
             self.stats["docs_processed"] = len(docs)
-            if not clear:
-                docs = self.filter_new_documents(docs)
-            else:
-                self.stats["docs_new"] = len(docs)
+            if clear:
+                logger.warning("Append-only extraction mode ignores --clear; already indexed documents will be skipped.")
+            docs = self.filter_new_documents(docs)
         else:
             docs = self.prepare_documents(data_file=data_file, clear=clear)
         reusable_docs: list[dict] = []
         reusable_entities: list[dict] = []
         reusable_relations: list[dict] = []
-        if not clear:
-            docs, reusable_docs, reusable_entities, reusable_relations = self.split_existing_extractions(docs)
+        docs, reusable_docs, reusable_entities, reusable_relations = self.split_existing_extractions(docs)
         if not docs:
             if reusable_docs or reusable_entities or reusable_relations:
                 logger.info("All documents already extracted. Reusing existing extraction payload.")
@@ -529,8 +526,15 @@ class IndexBuilder:
         self.stats.update(artifact.get("stats", {}))
 
         if clear:
-            self.vector_store.clear_all()
-            self.graph_store.clear()
+            logger.warning("Append-only storage mode ignores --clear; existing store data will not be modified.")
+
+        docs = self.filter_new_documents(docs)
+        if not docs:
+            logger.info("All artifact documents are already stored. Nothing to append.")
+            return self.stats
+        keep_doc_ids = {as_text(doc.get("doc_id")) for doc in docs}
+        entities = [entity for entity in entities if as_text(entity.get("source_doc_id")) in keep_doc_ids]
+        relations = [relation for relation in relations if as_text(relation.get("source_doc_id")) in keep_doc_ids]
 
         batch_size = max(1, int(embedding_batch_size or 128))
         self.store_payload_streaming(docs, entities, relations, embedding_batch_size=batch_size)
@@ -549,8 +553,7 @@ class IndexBuilder:
             raise ValueError(f"Manifest doc_type mismatch: {manifest.get('doc_type')} != {self.doc_type}")
 
         if clear:
-            self.vector_store.clear_all()
-            self.graph_store.clear()
+            logger.warning("Append-only storage mode ignores --clear; existing store data will not be modified.")
 
         artifact_files = [Path(path) for path in manifest.get("artifact_files", [])]
         totals = {
@@ -564,9 +567,20 @@ class IndexBuilder:
         }
         for artifact_file in artifact_files:
             artifact = self._load_extraction_artifact(artifact_file)
-            docs = artifact.get("docs", [])
-            entities = artifact.get("entities", [])
-            relations = artifact.get("relations", [])
+            docs = self.filter_new_documents(artifact.get("docs", []))
+            if not docs:
+                continue
+            keep_doc_ids = {as_text(doc.get("doc_id")) for doc in docs}
+            entities = [
+                entity
+                for entity in artifact.get("entities", [])
+                if as_text(entity.get("source_doc_id")) in keep_doc_ids
+            ]
+            relations = [
+                relation
+                for relation in artifact.get("relations", [])
+                if as_text(relation.get("source_doc_id")) in keep_doc_ids
+            ]
             self.store_payload_streaming(
                 docs,
                 entities,
@@ -607,8 +621,7 @@ class IndexBuilder:
             self.stats.update(checkpoint.get("stats", {}))
         else:
             if clear:
-                self.vector_store.clear_all()
-                self.graph_store.clear()
+                logger.warning("Append-only storage mode ignores --clear; existing store data will not be modified.")
 
             # 1. 데이터 로드
             raw_data = self.load_data(data_file)
@@ -618,8 +631,7 @@ class IndexBuilder:
 
             # 3. 이미 인덱싱된 문서 제외
             docs = self.filter_new_documents(docs)
-            if not clear:
-                docs = self.filter_unextracted_documents(docs)
+            docs = self.filter_unextracted_documents(docs)
 
             if not docs:
                 logger.info("All documents already indexed. Nothing to do.")

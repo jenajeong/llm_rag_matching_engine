@@ -127,6 +127,51 @@ class ChromaVectorStore:
         hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
         return f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
+    def _add_new_only(
+        self,
+        collection,
+        ids: List[str],
+        embeddings,
+        documents: List[str],
+        metadatas: List[Dict],
+    ) -> int:
+        """
+        Append-only insert. Existing ids are skipped so stored items are never
+        overwritten by a later pipeline run.
+        """
+        if not ids:
+            return 0
+
+        embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
+        inserted = 0
+        for i in range(0, len(ids), CHROMADB_MAX_BATCH_SIZE):
+            batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, len(ids))
+            batch_ids = ids[i:batch_end]
+            existing = set(collection.get(ids=batch_ids).get("ids", []) or [])
+
+            seen_in_batch: set[str] = set()
+            new_indexes = []
+            for local_index, item_id in enumerate(batch_ids):
+                if item_id in existing or item_id in seen_in_batch:
+                    continue
+                seen_in_batch.add(item_id)
+                new_indexes.append(i + local_index)
+
+            if not new_indexes:
+                print(f"  Batch {i//CHROMADB_MAX_BATCH_SIZE + 1}: 0 new items")
+                continue
+
+            collection.add(
+                ids=[ids[index] for index in new_indexes],
+                embeddings=[embeddings_list[index] for index in new_indexes],
+                documents=[documents[index] for index in new_indexes],
+                metadatas=[metadatas[index] for index in new_indexes],
+            )
+            inserted += len(new_indexes)
+            print(f"  Batch {i//CHROMADB_MAX_BATCH_SIZE + 1}: {len(new_indexes)} new items")
+
+        return inserted
+
     # =========================================================
     # 以묐났 泥댄겕
     # =========================================================
@@ -219,22 +264,8 @@ class ChromaVectorStore:
                 "doc_type": doc_type
             })
 
-        # ?꾨쿋?⑹쓣 由ъ뒪?몃줈 蹂??
-        embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
-
-        # ChromaDB??諛곗튂濡?異붽? (upsert濡?以묐났 諛⑹?)
-        total = len(ids)
-        for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
-            batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
-            collection.upsert(
-                ids=ids[i:batch_end],
-                embeddings=embeddings_list[i:batch_end],
-                documents=documents[i:batch_end],
-                metadatas=metadatas[i:batch_end]
-            )
-            print(f"  Batch {i//CHROMADB_MAX_BATCH_SIZE + 1}: {batch_end - i} items")
-
-        print(f"Added {len(entities)} entities to {collection_name}")
+        inserted = self._add_new_only(collection, ids, embeddings, documents, metadatas)
+        print(f"Added {inserted}/{len(ids)} new entities to {collection_name}")
 
     def add_relations(
         self,
@@ -268,9 +299,11 @@ class ChromaVectorStore:
             if not source or not target:
                 continue
             keywords = as_text(relation.get("keywords"))
+            source_doc_id = as_text(relation.get("source_doc_id"))
 
-            # 怨좎쑀 ID ?앹꽦
-            raw_id = f"{doc_type}_r_{source}_{target}"
+            # Unique per relation and source document. Different professors/docs
+            # can have the same semantic relation without overwriting each other.
+            raw_id = f"{doc_type}_r_{source}_{target}_{source_doc_id}"
             hash_suffix = hashlib.md5(raw_id.encode()).hexdigest()[:8]
             rel_id = f"{raw_id.replace(' ', '_')[:90]}_{hash_suffix}"
 
@@ -282,25 +315,12 @@ class ChromaVectorStore:
                 "source_entity": source,
                 "target_entity": target,
                 "keywords": keywords,
-                "source_doc_id": relation.get("source_doc_id", ""),
+                "source_doc_id": source_doc_id,
                 "doc_type": doc_type
             })
 
-        embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
-
-        # ChromaDB??諛곗튂濡?異붽?
-        total = len(ids)
-        for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
-            batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
-            collection.upsert(
-                ids=ids[i:batch_end],
-                embeddings=embeddings_list[i:batch_end],
-                documents=documents[i:batch_end],
-                metadatas=metadatas[i:batch_end]
-            )
-            print(f"  Batch {i//CHROMADB_MAX_BATCH_SIZE + 1}: {batch_end - i} items")
-
-        print(f"Added {len(relations)} relations to {collection_name}")
+        inserted = self._add_new_only(collection, ids, embeddings, documents, metadatas)
+        print(f"Added {inserted}/{len(ids)} new relations to {collection_name}")
 
     def add_chunks(
         self,
@@ -344,21 +364,8 @@ class ChromaVectorStore:
                 "doc_type": doc_type
             })
 
-        embeddings_list = embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings
-
-        # ChromaDB??諛곗튂濡?異붽?
-        total = len(ids)
-        for i in range(0, total, CHROMADB_MAX_BATCH_SIZE):
-            batch_end = min(i + CHROMADB_MAX_BATCH_SIZE, total)
-            collection.upsert(
-                ids=ids[i:batch_end],
-                embeddings=embeddings_list[i:batch_end],
-                documents=documents[i:batch_end],
-                metadatas=metadatas[i:batch_end]
-            )
-            print(f"  Batch {i//CHROMADB_MAX_BATCH_SIZE + 1}: {batch_end - i} items")
-
-        print(f"Added {len(chunks)} chunks to {collection_name}")
+        inserted = self._add_new_only(collection, ids, embeddings, documents, metadatas)
+        print(f"Added {inserted}/{len(ids)} new chunks to {collection_name}")
 
     # =========================================================
     # 寃??
