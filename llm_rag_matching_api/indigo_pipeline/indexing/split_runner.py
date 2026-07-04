@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -96,7 +97,14 @@ def _run_command(command: list[str], cwd: Path, retries: int) -> int:
     return last_returncode
 
 
-def _artifact_is_valid(path: Path, doc_type: str) -> bool:
+def _doc_signature(doc: dict[str, Any]) -> tuple[str, str]:
+    doc_id = str(doc.get("doc_id") or "")
+    text = " ".join(str(doc.get("text") or "").split())
+    text_hash = hashlib.sha1(text.encode("utf-8")).hexdigest() if text else ""
+    return doc_id, text_hash
+
+
+def _artifact_is_valid(path: Path, doc_type: str, expected_docs: list[dict[str, Any]] | None = None) -> bool:
     if not path.exists():
         return False
     try:
@@ -105,7 +113,12 @@ def _artifact_is_valid(path: Path, doc_type: str) -> bool:
         return False
     if artifact.get("doc_type") != doc_type:
         return False
-    return isinstance(artifact.get("docs"), list) and isinstance(artifact.get("entities"), list) and isinstance(artifact.get("relations"), list)
+    docs = artifact.get("docs")
+    if not isinstance(docs, list) or not isinstance(artifact.get("entities"), list) or not isinstance(artifact.get("relations"), list):
+        return False
+    if expected_docs is None:
+        return True
+    return [_doc_signature(doc) for doc in docs] == [_doc_signature(doc) for doc in expected_docs]
 
 
 def _manifest_is_valid(path: Path, doc_type: str) -> bool:
@@ -257,10 +270,13 @@ def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear
             docs_file = doc_run_dir / "docs" / f"batch_{batch_index:04d}.json"
             artifact_file = doc_run_dir / "artifacts" / f"batch_{batch_index:04d}.json"
 
-            if args.resume_extract and _artifact_is_valid(artifact_file, doc_type):
-                print(f"{doc_type}: skipping completed extraction batch {batch_index}")
-                artifact_files.append(artifact_file)
-                continue
+            if args.resume_extract:
+                if _artifact_is_valid(artifact_file, doc_type, expected_docs=batch_docs):
+                    print(f"{doc_type}: skipping completed extraction batch {batch_index}")
+                    artifact_files.append(artifact_file)
+                    continue
+                if artifact_file.exists():
+                    print(f"{doc_type}: existing artifact does not match current batch {batch_index}; re-extracting")
 
             _write_json(docs_file, batch_docs)
             command = [

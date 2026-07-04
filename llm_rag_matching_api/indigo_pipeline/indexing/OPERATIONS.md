@@ -18,6 +18,8 @@
 - Use `--resume-extract` only with the same `--run-dir`, unchanged train data, and unchanged extraction code.
 - Do not use resume after collection, filtering, doc-id logic, prompt, or extraction code changes.
 - After data/code changes, start a new run directory.
+- When `--resume-extract` is used, the runner reuses an artifact only if the artifact docs match the current batch doc IDs and text fingerprints.
+- If a same-numbered batch artifact exists but the current batch contents changed, the runner re-extracts that batch.
 
 ## Artifact Reuse Rules
 
