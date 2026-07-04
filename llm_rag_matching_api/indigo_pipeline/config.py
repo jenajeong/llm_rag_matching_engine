@@ -25,6 +25,13 @@ def _path_env(name: str, default: Path) -> Path:
     return Path(value) if value else default
 
 
+def _optional_int_env(name: str) -> int | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    return int(value)
+
+
 load_env()
 
 DATA_DIR = _path_env("INDIGO_PIPELINE_DATA_DIR", DJANGO_PROJECT_DIR / "data")
@@ -34,6 +41,8 @@ PROJECT_DATA_DIR = _path_env("INDIGO_PROJECT_DATA_DIR", DATA_DIR / "project")
 TRAIN_DATA_DIR = _path_env("INDIGO_PIPELINE_TRAIN_DATA_DIR", DATA_DIR / "train")
 TEST_DATA_DIR = _path_env("INDIGO_PIPELINE_TEST_DATA_DIR", DATA_DIR / "test")
 CHECKPOINT_DIR = _path_env("INDIGO_PIPELINE_CHECKPOINT_DIR", DATA_DIR / "checkpoints")
+SPLIT_RUN_RETENTION_DAYS = _optional_int_env("INDIGO_SPLIT_RUN_RETENTION_DAYS")
+SPLIT_RUN_MAX_RUNS = _optional_int_env("INDIGO_SPLIT_RUN_MAX_RUNS")
 RESULTS_DIR = _path_env("INDIGO_PIPELINE_RESULTS_DIR", DJANGO_PROJECT_DIR / "results")
 LOG_DIR = _path_env("INDIGO_PIPELINE_LOG_DIR", DJANGO_PROJECT_DIR / "logs")
 RAG_STORE_DIR = _path_env("INDIGO_RAG_STORE_DIR", DATA_DIR / "rag_store_v3")

@@ -34,7 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--embedding-batch-size", type=int, default=128, help="Embedding/upsert batch size in store phase.")
     parser.add_argument("--retries", type=int, default=0)
     parser.add_argument("--keep-going", action="store_true")
-    parser.add_argument("--resume-extract", action="store_true", help="Skip extraction batches with valid artifacts.")
+    parser.add_argument(
+        "--resume-extract",
+        action="store_true",
+        help="Skip extraction batches with valid artifacts. Use only for the same run-dir with unchanged data/code.",
+    )
     parser.add_argument("--skip-extract", action="store_true", help="Reuse manifest and only store.")
     parser.add_argument("--skip-store", action="store_true", help="Only run extraction subprocesses and manifest creation.")
     parser.add_argument("--run-dir", default=None)
@@ -44,8 +48,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lock-timeout", type=int, default=0, help="Seconds to wait for lock when --wait-lock is set. 0 means forever.")
     parser.add_argument("--stale-lock-seconds", type=int, default=24 * 60 * 60)
     parser.add_argument("--cleanup-success", action="store_true", help="Delete per-batch docs/artifacts after successful store.")
-    parser.add_argument("--retention-days", type=int, default=None, help="Delete old split run directories after success.")
-    parser.add_argument("--max-runs", type=int, default=None, help="Keep only the newest N split run directories after success.")
+    parser.add_argument(
+        "--keep-extraction-checkpoints",
+        action="store_true",
+        help="Keep legacy extraction_{doc_type}_checkpoint.json files after a successful doc-type run.",
+    )
+    parser.add_argument(
+        "--retention-days",
+        type=int,
+        default=config.SPLIT_RUN_RETENTION_DAYS,
+        help="Delete old split run directories after success. Default: INDIGO_SPLIT_RUN_RETENTION_DAYS.",
+    )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        default=config.SPLIT_RUN_MAX_RUNS,
+        help="Keep only the newest N split run directories after success. Default: INDIGO_SPLIT_RUN_MAX_RUNS.",
+    )
     return parser
 
 
@@ -209,6 +228,13 @@ def _cleanup_old_runs(run_root: Path, retention_days: int | None, max_runs: int 
             shutil.rmtree(path, ignore_errors=True)
 
 
+def _cleanup_extraction_checkpoint(doc_type: str) -> None:
+    checkpoint_file = config.CHECKPOINT_DIR / f"extraction_{doc_type}_checkpoint.json"
+    if checkpoint_file.exists():
+        checkpoint_file.unlink(missing_ok=True)
+        print(f"{doc_type}: removed legacy extraction checkpoint: {checkpoint_file}")
+
+
 def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear_store: bool) -> dict[str, Any]:
     setup_logging(f"split_{doc_type}")
     doc_run_dir = run_root / doc_type
@@ -286,6 +312,9 @@ def _run_doc_type(args: argparse.Namespace, doc_type: str, run_root: Path, clear
         )
         if args.cleanup_success:
             _cleanup_run_dir(doc_run_dir)
+
+    if not args.keep_extraction_checkpoints:
+        _cleanup_extraction_checkpoint(doc_type)
 
     return {
         "doc_type": doc_type,

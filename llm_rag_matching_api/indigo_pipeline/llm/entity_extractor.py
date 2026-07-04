@@ -178,7 +178,7 @@ class AsyncEntityRelationExtractor(EntityRelationExtractor):
         documents: list[dict],
         doc_type: str = "patent",
         progress_callback=None,
-        resume: bool = True,
+        resume: bool = False,
     ) -> tuple[list[Entity], list[Relation], list[str]]:
         self.semaphore = asyncio.Semaphore(self.concurrency)
         all_entities: list[Entity] = []

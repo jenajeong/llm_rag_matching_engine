@@ -225,14 +225,6 @@ class IndexBuilder:
                 alias_to_doc_id.setdefault(source_doc_id, source_doc_id)
                 relations_by_doc.setdefault(source_doc_id, []).append(relation)
 
-        checkpoint_path = config.CHECKPOINT_DIR / f"extraction_{self.doc_type}_checkpoint.json"
-        if checkpoint_path.exists():
-            try:
-                checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-                ingest(checkpoint)
-            except Exception:
-                logger.warning("Failed to read extraction checkpoint: %s", checkpoint_path, exc_info=True)
-
         artifact_path = self.get_extraction_file()
         if artifact_path.exists():
             try:
@@ -329,7 +321,12 @@ class IndexBuilder:
                 logger.info("Extraction progress: %s/%s (%.1f docs/min)", processed, total, processed / elapsed * 60)
 
         entities, relations, failed_doc_ids = asyncio.run(
-            self.extractor.extract_batch_async(docs, doc_type=self.doc_type, progress_callback=progress)
+            self.extractor.extract_batch_async(
+                docs,
+                doc_type=self.doc_type,
+                progress_callback=progress,
+                resume=False,
+            )
         )
         return self._normalize_extraction_result(entities, relations, failed_doc_ids)
 
