@@ -666,25 +666,34 @@ class IndexBuilder:
 
     def retry_failed(self, max_docs: int | None = None):
         failed_file = config.LOG_DIR / f"failed_docs_{self.doc_type}.json"
-        checkpoint_file = config.CHECKPOINT_DIR / f"index_{self.doc_type}.pkl"
-        if not failed_file.exists() or not checkpoint_file.exists():
-            logger.error("Missing failed-doc log or index checkpoint for %s", self.doc_type)
+        if not failed_file.exists():
+            logger.error("Missing failed-doc log for %s: %s", self.doc_type, failed_file)
             return None
         failed = json.loads(failed_file.read_text(encoding="utf-8")).get("failed_doc_ids", [])
-        with checkpoint_file.open("rb") as f:
-            checkpoint = pickle.load(f)
-        doc_map = {as_text(doc.get("doc_id")): doc for doc in checkpoint.get("docs", [])}
+        current_docs = self.process_documents(self.load_data())
+        doc_map = {as_text(doc.get("doc_id")): doc for doc in current_docs}
         docs = [doc_map[doc_id] for doc_id in failed if doc_id in doc_map]
+        stale_count = len([doc_id for doc_id in failed if doc_id not in doc_map])
+        if stale_count:
+            logger.warning("Skipping %s stale failed-doc ids not present in current %s train data", stale_count, self.doc_type)
         if max_docs:
             docs = docs[:max_docs]
+        if not docs:
+            logger.info("No current failed docs to retry for %s", self.doc_type)
+            return {"retried": 0, "success": 0, "still_failed": 0, "stale_failed_doc_ids": stale_count}
         entities, relations, still_failed = self.extract_entities_relations(docs)
         if entities:
             entities = merge_duplicate_entities(entities)
             relations = merge_duplicate_relations(relations)
-        embeddings = self.generate_embeddings(entities, relations, docs)
-        self.store_to_vector_db(entities, relations, docs, *embeddings)
+        embeddings = self.generate_embeddings(entities, relations, [])
+        self.store_to_vector_db(entities, relations, [], *embeddings)
         self.store_to_graph_db(entities, relations)
-        return {"retried": len(docs), "success": len(docs) - len(still_failed), "still_failed": len(still_failed)}
+        return {
+            "retried": len(docs),
+            "success": len(docs) - len(still_failed),
+            "still_failed": len(still_failed),
+            "stale_failed_doc_ids": stale_count,
+        }
 
     def _save_extraction_artifact(self, path: str | Path | None, docs, entities, relations, failed_doc_ids) -> Path:
         artifact_file = self.get_extraction_file(path)

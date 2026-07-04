@@ -9,9 +9,11 @@
 ## Checkpoints And Artifacts
 
 - `extraction_{doc_type}_checkpoint.json` is a temporary crash-recovery checkpoint.
+- `index_{doc_type}.pkl` is a legacy full-run checkpoint and is not used by split runner retries.
 - Split run artifacts under `data/checkpoints/split_index_runs/*/{doc_type}/artifacts/*.json` are reusable extraction cache files.
 - The builder does not automatically read legacy extraction checkpoints for reuse.
 - The split runner removes `extraction_{doc_type}_checkpoint.json` after a successful doc-type run unless `--keep-extraction-checkpoints` is passed.
+- `--retry-failed` reads failed doc IDs from logs but reloads documents from the current train data instead of trusting `index_{doc_type}.pkl`.
 
 ## Resume Rules
 
