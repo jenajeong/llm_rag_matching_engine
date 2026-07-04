@@ -3,6 +3,7 @@
 # INDigO 파이프라인 종료 후 점검 스크립트
 # 분기별 crontab 파이프라인(collect → filter → extract → embed)
 # 실행이 끝난 뒤, 정상적으로 완료됐는지 5가지 항목을 확인합니다.
+# 1, 3, 4번 항목은 patent / article / project 문서 타입별로 세분화하여 표시합니다.
 #
 # 사용법:
 #   bash check_pipeline_health.sh
@@ -16,6 +17,8 @@ echo ""
 PASS=0
 FAIL=0
 
+DOC_TYPES=("patent" "article" "project")
+
 check_pass() {
     echo "  [정상] $1"
     PASS=$((PASS+1))
@@ -27,7 +30,7 @@ check_fail() {
 }
 
 # -------------------------------------------------------------
-# 1. 파이프라인이 에러 없이 끝까지 돌았는지
+# 1. 파이프라인이 에러 없이 끝까지 돌았는지 (문서 타입별)
 # -------------------------------------------------------------
 echo "[1] 파이프라인 종료 상태 확인"
 
@@ -39,17 +42,26 @@ if [ -z "$LATEST_LOG" ]; then
 else
     echo "  최근 로그 파일: $LATEST_LOG"
     if grep -q "Pipeline finished" "$LATEST_LOG"; then
-        check_pass "파이프라인이 정상적으로 끝까지 실행되었습니다."
+        check_pass "파이프라인 전체가 정상적으로 끝까지 실행되었습니다."
     else
         check_fail "로그에서 'Pipeline finished' 메시지를 찾지 못했습니다. 중간에 중단됐을 가능성이 있습니다."
     fi
 
-    ERROR_LINES=$(grep -i "failed\|error" "$LATEST_LOG")
-    if [ -z "$ERROR_LINES" ]; then
-        check_pass "로그에 에러/실패 메시지가 없습니다."
-    else
-        check_fail "로그에서 에러 메시지가 발견됐습니다. 아래 내용을 확인하세요:"
-        echo "$ERROR_LINES" | sed 's/^/    /'
+    echo "  ── 문서 타입별 에러/실패 로그 확인 ──"
+    for doc_type in "${DOC_TYPES[@]}"; do
+        TYPE_ERRORS=$(grep -i "^${doc_type}:.*\(failed\|error\)" "$LATEST_LOG")
+        if [ -z "$TYPE_ERRORS" ]; then
+            check_pass "[${doc_type}] 에러/실패 로그 없음"
+        else
+            check_fail "[${doc_type}] 에러 로그 발견:"
+            echo "$TYPE_ERRORS" | sed 's/^/      /'
+        fi
+    done
+
+    OTHER_ERRORS=$(grep -i "failed\|error" "$LATEST_LOG" | grep -vE "^(patent|article|project):")
+    if [ -n "$OTHER_ERRORS" ]; then
+        check_fail "문서 타입과 무관한 일반 에러 로그가 발견됐습니다:"
+        echo "$OTHER_ERRORS" | sed 's/^/      /'
     fi
 fi
 echo ""
@@ -75,37 +87,129 @@ fi
 echo ""
 
 # -------------------------------------------------------------
-# 3. 체크포인트 파일이 정상적으로 정리됐는지 (오염 방지 확인)
+# 3. 체크포인트 파일이 정상적으로 정리됐는지 (문서 타입별, 오염 방지 확인)
 # -------------------------------------------------------------
 echo "[3] 체크포인트 정리 상태 확인"
 
 CHECKPOINT_DIR="/app/data/checkpoints"
-LEFTOVER_CHECKPOINTS=$(ls "$CHECKPOINT_DIR"/extraction_*_checkpoint.json 2>/dev/null)
 
-if [ -z "$LEFTOVER_CHECKPOINTS" ]; then
-    check_pass "임시 체크포인트 파일이 정상적으로 삭제되었습니다."
-else
-    check_fail "삭제되지 않은 체크포인트 파일이 남아있습니다. 다음 실행 시 오염 위험이 있으니 확인하세요:"
-    echo "$LEFTOVER_CHECKPOINTS" | sed 's/^/    /'
-fi
+for doc_type in "${DOC_TYPES[@]}"; do
+    CHECKPOINT_FILE="${CHECKPOINT_DIR}/extraction_${doc_type}_checkpoint.json"
+    if [ -f "$CHECKPOINT_FILE" ]; then
+        check_fail "[${doc_type}] 삭제되지 않은 체크포인트 파일이 남아있습니다: ${CHECKPOINT_FILE}"
+        echo "      → 다음 실행 시 오염 위험이 있으니 확인 후 필요 시 수동 삭제하세요."
+    else
+        check_pass "[${doc_type}] 임시 체크포인트 파일이 정상적으로 삭제되었습니다."
+    fi
+done
 echo ""
 
 # -------------------------------------------------------------
-# 4. 실제로 데이터가 늘어났는지 (ChromaDB 문서 수 확인)
+# 4. 기대 증가량(필터링 파일) vs 실제 증가량(ChromaDB) 비교 (문서 타입별)
 # -------------------------------------------------------------
-echo "[4] ChromaDB 데이터 적재 현황"
+echo "[4] 기대 증가량 대비 실제 적재 증가량 검증 (문서 타입별)"
 
-python3 -c "
+HISTORY_FILE="/app/data/logs/chroma_counts_history.json"
+
+CHROMA_CHECK_OUTPUT=$(python3 -c "
+import json
+from pathlib import Path
 from indigo_pipeline.stores.vector_store import ChromaVectorStore
-store = ChromaVectorStore()
-for name, collection in store.collections.items():
-    print(f'    {name}: {collection.count()}건')
-" 2>/dev/null
+from indigo_pipeline import config
 
-if [ $? -eq 0 ]; then
-    check_pass "ChromaDB 컬렉션별 건수를 정상적으로 조회했습니다. 위 수치를 이전 실행 시점과 비교해 늘어났는지 확인하세요."
+DOC_TYPES = ['patent', 'article', 'project']
+ITEM_TYPES = ['chunks', 'entities', 'relations']
+HISTORY_FILE = Path('$HISTORY_FILE')
+
+# 1) 이전 실행 시점 기록 불러오기 (문서 타입별 chunks/entities/relations + 필터링 파일 건수)
+previous = {}
+if HISTORY_FILE.exists():
+    try:
+        previous = json.loads(HISTORY_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        previous = {}
+
+store = ChromaVectorStore()
+current = {}
+overall_ok = True
+
+for doc_type in DOC_TYPES:
+    print(f'  ── {doc_type} ──')
+    current[doc_type] = {}
+
+    # 현재 ChromaDB 건수
+    for item_type in ITEM_TYPES:
+        name = f'{doc_type}_{item_type}'
+        collection = store.collections.get(name)
+        current[doc_type][item_type] = collection.count() if collection is not None else 0
+
+    # 현재 필터링 최종 파일 건수
+    train_file = Path(config.TRAIN_FILES[doc_type])
+    if train_file.exists():
+        try:
+            records = json.loads(train_file.read_text(encoding='utf-8'))
+            filtered_count = len(records) if isinstance(records, list) else None
+        except Exception:
+            filtered_count = None
+    else:
+        filtered_count = None
+    current[doc_type]['filtered_file_count'] = filtered_count
+
+    prev = previous.get(doc_type, {})
+    prev_chunks = prev.get('chunks')
+    prev_filtered = prev.get('filtered_file_count')
+    curr_chunks = current[doc_type]['chunks']
+
+    if prev_chunks is None or prev_filtered is None or filtered_count is None:
+        print(f'    이전 기록이 없어 증가량 비교를 건너뜁니다. (이번 실행 결과는 다음 비교를 위해 저장됩니다)')
+        continue
+
+    expected_increase = filtered_count - prev_filtered   # 필터링 파일 기준, 새로 들어와야 할 문서 수
+    actual_increase = curr_chunks - prev_chunks           # ChromaDB 기준, 실제로 늘어난 문서 수
+    excluded_amount = expected_increase - actual_increase  # 기대했지만 실제로 반영되지 않은 양 (음수면 초과 적재)
+
+    print(f'    증가 전 양(이전 chunks)   : {prev_chunks}건')
+    print(f'    증가 후 양(현재 chunks)   : {curr_chunks}건')
+    print(f'    증가해야 하는 양(필터링 기준): {expected_increase}건')
+    print(f'    실제 증가한 양(ChromaDB 기준): {actual_increase}건')
+    print(f'    제외된 양(기대 - 실제)     : {excluded_amount}건')
+
+    if expected_increase <= 0:
+        print(f'    → 새로 추가된 필터링 문서가 없어 비교 대상 아님')
+        continue
+
+    if actual_increase < 0:
+        print(f'    [경고] ChromaDB 건수가 오히려 줄어들었습니다. 데이터 손실 가능성이 있으니 확인하세요.')
+        overall_ok = False
+    elif excluded_amount < 0:
+        print(f'    [경고] 실제 증가량이 기대 증가량보다 많습니다({-excluded_amount}건 초과). 중복 적재 여부를 확인하세요.')
+        overall_ok = False
+    else:
+        excluded_ratio = (excluded_amount / expected_increase * 100) if expected_increase > 0 else 0
+        if excluded_ratio > 20:
+            print(f'    [경고] 제외된 양의 비율이 {excluded_ratio:.1f}%로 높습니다. 추출 실패 문서가 있는지 확인하세요.')
+            overall_ok = False
+        else:
+            print(f'    → 정상 범위 (제외 비율 {excluded_ratio:.1f}% — 짧은 초록/제목 제외 케이스 등 정상 제외분 포함 가능)')
+
+# 이번 실행 결과를 다음 비교를 위해 저장
+HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+HISTORY_FILE.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding='utf-8')
+
+import sys
+sys.exit(0 if overall_ok else 2)
+" 2>/tmp/chroma_check_err.log)
+
+CHROMA_EXIT=$?
+echo "$CHROMA_CHECK_OUTPUT"
+
+if [ $CHROMA_EXIT -eq 0 ]; then
+    check_pass "기대 증가량 대비 실제 적재 증가량이 정상 범위입니다."
+elif [ $CHROMA_EXIT -eq 2 ]; then
+    check_fail "기대 증가량과 실제 적재 증가량 사이에 경고가 발견되었습니다. 위 [경고] 항목을 확인하세요."
 else
     check_fail "ChromaDB 조회에 실패했습니다. 컨테이너 안에서 이 스크립트를 실행 중인지 확인하세요."
+    cat /tmp/chroma_check_err.log 2>/dev/null | sed 's/^/    /'
 fi
 echo ""
 
