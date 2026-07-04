@@ -45,6 +45,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - model_cache:/root/.cache/huggingface
       - /indigo/search-api/llm_rag_matching_api/data:/app/data
+      - /indigo/search-api/llm_rag_matching_api/check_pipeline_health.sh:/app/check_pipeline_health.sh:ro
     deploy:
       resources:
         reservations:
