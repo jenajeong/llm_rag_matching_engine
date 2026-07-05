@@ -16,6 +16,7 @@ LOG_FILE="$LOG_DIR/pipeline_${TIMESTAMP}.log"
 echo "[$(date)] Pipeline started" | tee -a "$LOG_FILE"
 
 API_CONTAINER="${INDIGO_API_CONTAINER:-search_api}"
+NGINX_CONTAINER="${INDIGO_NGINX_CONTAINER:-nginx}"
 
 container_exists() {
     docker container inspect "$1" >/dev/null 2>&1
@@ -36,6 +37,16 @@ start_api_container() {
         echo "[$(date)] API container restart requested: $API_CONTAINER" | tee -a "$LOG_FILE"
     else
         echo "[$(date)] API container not found, skip restart: $API_CONTAINER" | tee -a "$LOG_FILE"
+    fi
+}
+
+restart_nginx() {
+    if container_exists "$NGINX_CONTAINER"; then
+        sleep 5
+        docker exec "$NGINX_CONTAINER" nginx -s reload || docker restart "$NGINX_CONTAINER" || true
+        echo "[$(date)] nginx reloaded (or restarted as fallback): $NGINX_CONTAINER" | tee -a "$LOG_FILE"
+    else
+        echo "[$(date)] nginx container not found, skip reload: $NGINX_CONTAINER" | tee -a "$LOG_FILE"
     fi
 }
 
@@ -105,5 +116,6 @@ echo "[$(date)] Indexing complete." | tee -a "$LOG_FILE"
 # =============================================================
 echo "[$(date)] Restarting API container..." | tee -a "$LOG_FILE"
 start_api_container
+restart_nginx
 
 echo "[$(date)] Pipeline finished." | tee -a "$LOG_FILE"
