@@ -58,10 +58,16 @@ else
         fi
     done
 
-    OTHER_ERRORS=$(grep -i "failed\|error" "$LATEST_LOG" | grep -vE "^(patent|article|project):")
+    # 실제 에러만 추출: "ERROR" 로그 레벨, Traceback, Exception 등 진짜 에러 신호만 확인.
+    # '"errors": 0', '"failed_docs": 0'처럼 값이 0인 정상 통계(JSON dump)는 제외한다.
+    OTHER_ERRORS=$(grep -E "ERROR|CRITICAL|Traceback|Exception" "$LATEST_LOG" \
+        | grep -vE '"(errors|failed_docs)":[[:space:]]*0\b' \
+        | grep -vE "^(patent|article|project):")
     if [ -n "$OTHER_ERRORS" ]; then
         check_fail "문서 타입과 무관한 일반 에러 로그가 발견됐습니다:"
         echo "$OTHER_ERRORS" | sed 's/^/      /'
+    else
+        check_pass "문서 타입과 무관한 일반 에러 로그 없음"
     fi
 fi
 echo ""
@@ -143,39 +149,57 @@ for doc_type in DOC_TYPES:
         collection = store.collections.get(name)
         current[doc_type][item_type] = collection.count() if collection is not None else 0
 
-    # 현재 필터링 최종 파일 건수
+    # 현재 필터링 최종 파일의 처리 대상(eligible) 건수
+    # 파이프라인의 실제 처리 기준(text 100자 이상)과 동일한 규칙으로 계산한다.
+    # 단순히 파일 전체 건수를 쓰면, project처럼 전체 건수는 그대로여도
+    # eligible로 분류되는 문서 구성 자체가 바뀌는 경우를 놓친다.
     train_file = Path(config.TRAIN_FILES[doc_type])
     if train_file.exists():
         try:
             records = json.loads(train_file.read_text(encoding='utf-8'))
-            filtered_count = len(records) if isinstance(records, list) else None
+            if isinstance(records, list):
+                total_count = len(records)
+                eligible_count = sum(
+                    1 for r in records
+                    if isinstance(r.get('text'), str) and len(r.get('text')) >= 100
+                )
+            else:
+                total_count = None
+                eligible_count = None
         except Exception:
-            filtered_count = None
+            total_count = None
+            eligible_count = None
     else:
-        filtered_count = None
-    current[doc_type]['filtered_file_count'] = filtered_count
+        total_count = None
+        eligible_count = None
+    current[doc_type]['filtered_file_total'] = total_count
+    current[doc_type]['filtered_file_eligible'] = eligible_count
 
     prev = previous.get(doc_type, {})
     prev_chunks = prev.get('chunks')
-    prev_filtered = prev.get('filtered_file_count')
+    prev_eligible = prev.get('filtered_file_eligible')
     curr_chunks = current[doc_type]['chunks']
 
-    if prev_chunks is None or prev_filtered is None or filtered_count is None:
+    if prev_chunks is None or prev_eligible is None or eligible_count is None:
         print(f'    이전 기록이 없어 증가량 비교를 건너뜁니다. (이번 실행 결과는 다음 비교를 위해 저장됩니다)')
         continue
 
-    expected_increase = filtered_count - prev_filtered   # 필터링 파일 기준, 새로 들어와야 할 문서 수
+    expected_increase = eligible_count - prev_eligible   # 처리 대상(eligible) 문서 수 기준 기대 증가량
     actual_increase = curr_chunks - prev_chunks           # ChromaDB 기준, 실제로 늘어난 문서 수
     excluded_amount = expected_increase - actual_increase  # 기대했지만 실제로 반영되지 않은 양 (음수면 초과 적재)
 
-    print(f'    증가 전 양(이전 chunks)   : {prev_chunks}건')
-    print(f'    증가 후 양(현재 chunks)   : {curr_chunks}건')
-    print(f'    증가해야 하는 양(필터링 기준): {expected_increase}건')
-    print(f'    실제 증가한 양(ChromaDB 기준): {actual_increase}건')
-    print(f'    제외된 양(기대 - 실제)     : {excluded_amount}건')
+    print(f'    증가 전 양(이전 chunks)      : {prev_chunks}건')
+    print(f'    증가 후 양(현재 chunks)      : {curr_chunks}건')
+    print(f'    증가해야 하는 양(eligible 기준): {expected_increase}건  (필터링 전체 {total_count}건 중 처리 대상 {eligible_count}건)')
+    print(f'    실제 증가한 양(ChromaDB 기준) : {actual_increase}건')
+    print(f'    제외된 양(기대 - 실제)        : {excluded_amount}건')
 
     if expected_increase <= 0:
-        print(f'    → 새로 추가된 필터링 문서가 없어 비교 대상 아님')
+        if actual_increase > 0:
+            print(f'    → eligible 기준 총량은 늘지 않았지만 실제로는 {actual_increase}건이 새로 저장됨.')
+            print(f'      (필터링 전체 건수는 유지된 채, 처리 대상으로 분류되는 문서 구성 자체가 바뀌었을 가능성 — 데이터 소스 안정성 참고용으로 기록)')
+        else:
+            print(f'    → 새로 추가된 필터링 문서가 없어 비교 대상 아님')
         continue
 
     if actual_increase < 0:
